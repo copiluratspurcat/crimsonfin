@@ -9,6 +9,59 @@ let win;
 let session = null;
 const dataPath = () => path.join(app.getPath('userData'), 'session.json');
 const deviceIdPath = () => path.join(app.getPath('userData'), 'device-id');
+// CrimsonFin's default server pair. Both addresses can be changed in the login UI.
+// Avoid putting API keys, Jellyfin passwords, or Tailscale auth keys in source code.
+const DEFAULT_CONNECTION = Object.freeze({
+  local: 'http://192.168.1.105:8096',
+  remote: 'https://hoesmad.tail0adc10.ts.net',
+  smart: true
+});
+const connectionPath = () => path.join(app.getPath('userData'), 'connection.json');
+function readConnection() {
+  try { return {...DEFAULT_CONNECTION, ...JSON.parse(fs.readFileSync(connectionPath(), 'utf8'))}; }
+  catch { return {...DEFAULT_CONNECTION}; }
+}
+function saveConnection(config) {
+  fs.mkdirSync(app.getPath('userData'), {recursive:true});
+  fs.writeFileSync(connectionPath(), JSON.stringify(config, null, 2), {mode:0o600});
+}
+let connection = null;
+function validateConnection(input) {
+  if (!input || typeof input !== 'object') throw Error('Invalid server settings.');
+  const local = input.local ? normalizeServer(input.local) : '';
+  const remote = input.remote ? normalizeServer(input.remote) : '';
+  const smart = !!input.smart;
+  if (!local && !remote) throw Error('Enter at least one Jellyfin server address.');
+  return {local,remote,smart};
+}
+function candidates(config) {
+  const ordered = config.smart ? [config.local, config.remote] : [config.remote || config.local];
+  return [...new Set(ordered.filter(Boolean))];
+}
+function connectionMode(server, config=connection) {
+  return server === config?.local ? 'local' : server === config?.remote ? 'remote' : 'custom';
+}
+async function probe(server, timeout=2800) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await net.fetch(new URL('/System/Info/Public', server).toString(), {
+      method: 'GET', signal:controller.signal, headers:{Accept:'application/json'}, cache:'no-store'
+    });
+    if (!response.ok) return false;
+    const data=await response.json();
+    return !!data && typeof data === 'object' && (data.Id || data.ServerName || data.Version);
+  } catch { return false; }
+  finally { clearTimeout(timer); }
+}
+async function findReachable(config) {
+  for (const url of candidates(config)) if (await probe(url)) return url;
+  throw Error('Unable to reach Jellyfin on either address. Check your home connection or Tailscale Funnel.');
+}
+function visibleSession() {
+  return session && {server:session.server,user:session.user,mode:connectionMode(session.server)};
+}
+
 function deviceId() {
   try { return fs.readFileSync(deviceIdPath(), 'utf8'); } catch {
     const id = crypto.randomUUID(); fs.mkdirSync(app.getPath('userData'), {recursive:true});
@@ -97,13 +150,45 @@ function makeWindow(){
 }
 app.whenReady().then(()=>{
   session=restoreSession();
-  ipcMain.handle('session:get',()=> session && {server:session.server, user:session.user});
-  ipcMain.handle('session:login',async(_,{server,username,password})=>{
-    const base=normalizeServer(server);
+  try { connection=validateConnection(readConnection()); }
+  catch { connection={...DEFAULT_CONNECTION}; }
+  ipcMain.handle('connection:get',()=>connection);
+  ipcMain.handle('connection:save',(_event,settings)=>{
+    const next=validateConnection(settings);
+    connection=next;saveConnection(connection);
+    return connection;
+  });
+  ipcMain.handle('session:get',async()=>{
+    if (!session) return null;
+    // On every launch prefer LAN when reachable, otherwise use the HTTPS Funnel.
+    // Never send the saved Jellyfin access token to an unverified endpoint.
+    try {
+      const next=await findReachable(connection);
+      const currentInfo=await request(next,'/System/Info/Public',null);
+      const priorInfo=await request(session.server,'/System/Info/Public',null).catch(()=>null);
+      if (next !== session.server && priorInfo?.Id && currentInfo?.Id && priorInfo.Id!==currentInfo.Id) {
+        throw Error('Configured addresses refer to different Jellyfin servers.');
+      }
+      // If the original server is unavailable, validate that the existing token
+      // belongs to the destination before using it for ordinary API requests.
+      if (next !== session.server) {
+        if (!session.serverId || !currentInfo?.Id || currentInfo.Id !== session.serverId) throw Error('Server identity mismatch. Switch account and sign in again to enable Smart Connect.');
+        await request(next,'/Users/Me',session.token);
+        session.server=next;session.serverId=currentInfo.Id;storeSession(session);
+      }
+    } catch (err) {
+      // Retain the existing session; the UI will display a useful error on API load.
+      if (/identity mismatch|different Jellyfin servers/i.test(err.message)) throw err;
+    }
+    return visibleSession();
+  });
+  ipcMain.handle('session:login',async(_,{username,password})=>{
+    const base=await findReachable(connection);
+    const info=await request(base,'/System/Info/Public',null);
     const result=await request(base,'/Users/AuthenticateByName',null,{method:'POST',body:{Username:username, Pw:password}});
     if(!result?.AccessToken||!result?.User?.Id) throw Error('The server did not return a valid session.');
-    session={server:base,token:result.AccessToken,user:result.User};storeSession(session);
-    return {server:base,user:result.User};
+    session={server:base,serverId:info?.Id||null,token:result.AccessToken,user:result.User};storeSession(session);
+    return visibleSession();
   });
   ipcMain.handle('session:logout',()=>{session=null;storeSession(null);return true});
   ipcMain.handle('api:request',async(_,{path:requestPath,method,body})=>{

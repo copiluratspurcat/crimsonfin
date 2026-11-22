@@ -1,7 +1,8 @@
 const {contextBridge, ipcRenderer}=require('electron');
 contextBridge.exposeInMainWorld('crimson',{
   session:()=>ipcRenderer.invoke('session:get'),
-  login:(server,username,password)=>ipcRenderer.invoke('session:login',{server,username,password}),
+  connection:{get:()=>ipcRenderer.invoke('connection:get'),save:(settings)=>ipcRenderer.invoke('connection:save',settings)},
+  login:(username,password)=>ipcRenderer.invoke('session:login',{username,password}),
   logout:()=>ipcRenderer.invoke('session:logout'),
   api:(path,method='GET',body)=>ipcRenderer.invoke('api:request',{path,method,body}),
   resource:(path)=>ipcRenderer.invoke('api:resource',{path}),

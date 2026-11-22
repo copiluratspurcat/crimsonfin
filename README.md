@@ -1,9 +1,7 @@
-# CrimsonFin v0.6
+# CrimsonFin v0.7 — Smart Connect
 
-Red-themed cross-platform Jellyfin desktop client. GitHub destination: `copiluratspurcat/crimsonfin`.
+A red-themed Jellyfin desktop client for Windows and Linux.
 
-**Start with [`GITHUB_SETUP_AND_UPDATES.md`](GITHUB_SETUP_AND_UPDATES.md)** for the exact steps to create the repository, build Windows and Linux installers using GitHub Actions, and publish updates.
+**New in v0.7:** CrimsonConnect automatically checks the home Jellyfin URL and falls back to the public Tailscale Funnel HTTPS URL when logging in or opening a saved session, with editable endpoints and a local/remote indicator. See [SMART_CONNECT_SETUP.md](SMART_CONNECT_SETUP.md).
 
-Local dev: `npm install && npm start`. Local Linux build: `npm run pack:linux`. Local Windows build must run on Windows: `npm run pack:win`.
-
-Automatic update eligibility: Windows NSIS installation and Linux AppImage; `.deb` requires manual update.
+Run `npm install && npm start` to launch from source. `npm run pack:linux` builds Linux packages; `npm run pack:win` builds Windows installers when run in Windows or a compatible build environment. The GitHub release workflow builds both platforms on hosted runners.

@@ -46,3 +46,11 @@
 /* CrimsonFin update notification */
 .crimson-update-notice{position:fixed;z-index:999999;bottom:24px;right:24px;max-width:min(420px,calc(100% - 48px));padding:14px 17px;background:#1e1019;border:1px solid #c83b58;border-radius:12px;color:#fff;display:flex;align-items:center;gap:12px;box-shadow:0 16px 50px #0009;font-size:13px}
 .crimson-update-notice span{flex:1;line-height:1.45}.crimson-update-notice button{cursor:pointer;border:0;border-radius:7px;padding:10px 12px;font-weight:800;color:white;background:#d83b52}
+
+/* CrimsonConnect settings in the login panel */
+.smart-check{display:flex!important;align-items:center;gap:12px;letter-spacing:.3px!important;font-size:12px!important;color:#f3ccd4!important;margin:18px 0 8px!important;cursor:pointer}
+.smart-check input{width:17px;height:17px;accent-color:#f63852;flex:none}
+.smart-connection-fields{border:1px solid #46242e;background:#160e13;border-radius:9px;padding:2px 13px 18px;margin:13px 0 20px}
+.smart-connection-fields label{margin-top:14px}
+.smart-connection-fields .input-wrap{height:44px}
+.smart-connection-fields input{font-size:12px}
