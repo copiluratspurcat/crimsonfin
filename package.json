@@ -1,8 +1,11 @@
 {
   "name": "crimsonfin",
-  "version": "0.6.0",
-  "description": "CrimsonFin \u2014 a cinematic desktop client for Jellyfin",
-  "author": "CrimsonFin Community",
+  "version": "0.6.1",
+  "description": "CrimsonFin — a cinematic desktop client for Jellyfin",
+  "author": {
+    "name": "copiluratspurcat",
+    "email": "poofcfghvh@Gmail.com"
+  },
   "license": "MIT",
   "main": "electron/main.cjs",
   "type": "module",
