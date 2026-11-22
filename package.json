@@ -1,0 +1,84 @@
+{
+  "name": "crimsonfin",
+  "version": "0.6.0",
+  "description": "CrimsonFin \u2014 a cinematic desktop client for Jellyfin",
+  "author": "CrimsonFin Community",
+  "license": "MIT",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "start": "npm run build && electron .",
+    "build": "vite build",
+    "pack:linux": "npm run build && electron-builder --linux deb AppImage --publish never",
+    "pack:win": "npm run build && electron-builder --win nsis --publish never",
+    "configure:updates": "node scripts/configure-updates.mjs",
+    "release:win": "npm run build && electron-builder --win nsis --publish never",
+    "release:linux": "npm run build && electron-builder --linux deb AppImage --publish never"
+  },
+  "dependencies": {
+    "hls.js": "^1.6.15",
+    "lucide": "^0.468.0",
+    "electron-updater": "^6.6.2"
+  },
+  "devDependencies": {
+    "electron": "^45.0.0",
+    "electron-builder": "^26.0.0",
+    "vite": "^7.0.0"
+  },
+  "build": {
+    "appId": "com.crimsonfin.desktop",
+    "productName": "CrimsonFin",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "linux": {
+      "target": [
+        "deb",
+        "AppImage"
+      ],
+      "category": "AudioVideo",
+      "icon": "assets/crimsonfin.png",
+      "artifactName": "CrimsonFin-${version}-Linux-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/crimsonfin.ico",
+      "artifactName": "CrimsonFin-${version}-Windows-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "CrimsonFin-Setup-${version}.${ext}",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "copiluratspurcat",
+        "repo": "crimsonfin",
+        "releaseType": "release"
+      }
+    ],
+    "appImage": {
+      "artifactName": "CrimsonFin-${version}-Linux-${arch}.${ext}"
+    },
+    "deb": {
+      "artifactName": "CrimsonFin-${version}-Linux-${arch}.${ext}"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/copiluratspurcat/crimsonfin.git"
+  }
+}

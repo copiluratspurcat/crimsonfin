@@ -1,0 +1,91 @@
+name: Build Windows and Linux installers + publish update feeds
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: ubuntu-24.04
+            platform: linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify release version and destination
+        shell: bash
+        run: |
+          node -e "const p=require('./package.json'); if(p.build.publish?.[0]?.owner !== 'copiluratspurcat' || p.build.publish?.[0]?.repo !== 'crimsonfin') process.exit(1)"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            node -e "const p=require('./package.json'); if(process.env.GITHUB_REF_NAME!=='v'+p.version) { console.error('Tag must equal v'+p.version); process.exit(1) }"
+          fi
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build renderer
+        run: npm run build
+      - name: Create Windows NSIS installer + latest.yml
+        if: matrix.platform == 'windows'
+        run: npx electron-builder --win nsis --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Create Linux DEB and AppImage + latest-linux.yml
+        if: matrix.platform == 'linux'
+        run: npx electron-builder --linux deb AppImage --x64 --publish never
+      - name: Check for update metadata
+        shell: bash
+        run: |
+          ls -lah release
+          if [[ "${{ matrix.platform }}" == "windows" ]]; then
+            test -f release/latest.yml
+          else
+            test -f release/latest-linux.yml
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crimsonfin-${{ matrix.platform }}
+          path: |
+            release/*.exe
+            release/*.deb
+            release/*.AppImage
+            release/*.yml
+            release/*.blockmap
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish GitHub Release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: crimsonfin-*
+          path: artifacts
+          merge-multiple: true
+      - name: Publish all Windows + Linux files together
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ls -lah artifacts
+          gh release create "$GITHUB_REF_NAME" artifacts/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "CrimsonFin $GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag
