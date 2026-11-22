@@ -1,7 +1,23 @@
-# CrimsonFin v0.7 — Smart Connect
+# CrimsonFin v1.0.0 — Preview
 
-A red-themed Jellyfin desktop client for Windows and Linux.
+Cinematic desktop Jellyfin client for Windows and Linux, based on v0.7 Smart Connect.
 
-**New in v0.7:** CrimsonConnect automatically checks the home Jellyfin URL and falls back to the public Tailscale Funnel HTTPS URL when logging in or opening a saved session, with editable endpoints and a local/remote indicator. See [SMART_CONNECT_SETUP.md](SMART_CONNECT_SETUP.md).
+## Run
 
-Run `npm install && npm start` to launch from source. `npm run pack:linux` builds Linux packages; `npm run pack:win` builds Windows installers when run in Windows or a compatible build environment. The GitHub release workflow builds both platforms on hosted runners.
+```bash
+npm install
+npm start
+```
+
+## Build
+
+```bash
+npm run pack:linux   # Linux machine: DEB + AppImage
+npm run pack:win     # Windows machine: NSIS installer
+```
+
+The GitHub Actions workflow builds both on tagged releases. The package is already versioned `1.0.0`. Do not tag until the build and live Jellyfin playback are tested.
+
+## Important
+
+Read `VERSION_1_RELEASE_NOTES.md` for implemented features, known missing features, and release instructions. *Native MPV, thumbnail seeking, and server-dependent skip intro are not completed.* The v1.0 label describes this feature-preview milestone, not a fully validated production release.
