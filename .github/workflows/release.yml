@@ -29,7 +29,7 @@ jobs:
       - name: Verify release version and destination
         shell: bash
         run: |
-          node -e "const p=require('./package.json'); if(p.build.publish?.[0]?.owner !== 'copiluratspurcat' || p.build.publish?.[0]?.repo !== 'crimsonfin') process.exit(1)"
+          node -e "const p=require('./package.json'); if(p.build.publish?.[0]?.owner !== 'copiluratspurcat' || p.build.publish?.[0]?.repo !== 'crimsonfin-downloads') process.exit(1)"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             node -e "const p=require('./package.json'); if(process.env.GITHUB_REF_NAME!=='v'+p.version) { console.error('Tag must equal v'+p.version); process.exit(1) }"
           fi
@@ -80,12 +80,17 @@ jobs:
       - name: Publish all Windows + Linux files together
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.DOWNLOADS_RELEASE_TOKEN }}
         run: |
           set -euo pipefail
           ls -lah artifacts
+          : "${GH_TOKEN:?Set DOWNLOADS_RELEASE_TOKEN in the private repository's Actions secrets}"
+          TARGET_REPO="copiluratspurcat/crimsonfin-downloads"
+          if gh release view "$GITHUB_REF_NAME" --repo "$TARGET_REPO" >/dev/null 2>&1; then
+            echo "Release tag already exists in $TARGET_REPO; upload manually or use a new version."
+            exit 1
+          fi
           gh release create "$GITHUB_REF_NAME" artifacts/* \
-            --repo "$GITHUB_REPOSITORY" \
+            --repo "$TARGET_REPO" \
             --title "CrimsonFin $GITHUB_REF_NAME" \
-            --generate-notes \
-            --verify-tag
+            --notes "Windows and Linux installers plus automatic-update metadata."

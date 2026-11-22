@@ -69,3 +69,58 @@
 .resume-progress>span{display:block;height:100%;background:#f34158;box-shadow:0 0 10px #f3415888}
 .app-version{font-size:10px;color:#ef5269;font-weight:800;letter-spacing:.8px}
 .settings-version{color:#f45a70;font-weight:800;white-space:nowrap}
+
+/* v1.0.2: keep the Windows drag strip separate from all header controls.
+   Custom window buttons occupy the upper-right 129px; playback/search
+   controls occupy a second row on Windows. */
+body.crimson-windows .topbar {height:104px; padding:46px 28px 12px 36px; gap:14px;}
+body.crimson-windows .top-actions {gap:12px; min-width:0; flex-wrap:nowrap;}
+body.crimson-windows .search-trigger {min-width:0; width:clamp(175px,20vw,270px);}
+body.crimson-windows .avatar {flex-shrink:0;}
+body.crimson-windows .sound-toggle {white-space:nowrap;flex-shrink:0;}
+body.crimson-windows .window-drag {right:129px; height:34px;}
+body.crimson-windows .window-controls {height:34px;}
+body.crimson-windows .window-controls button {height:34px;}
+@media(max-width:1100px) {
+ body.crimson-windows .topbar{padding-left:20px;padding-right:20px;}
+ body.crimson-windows .top-actions{gap:8px;}
+ body.crimson-windows .search-trigger{width:170px;}
+ body.crimson-windows .search-trigger kbd{display:none;}
+ body.crimson-windows .crumb{font-size:9px;}
+}
+
+/* v1.0.3: Cross-platform window chrome must NEVER overlap application actions.
+   Reserve a real 34px title strip on both Linux and Windows. The old
+   crimson-windows-only rules did not apply to KDE/Linux. */
+:root { --crimson-title-height: 34px; }
+#app { height:100vh; min-height:0; padding-top:var(--crimson-title-height); }
+.window-drag {
+  top:0; left:0; right:129px; height:var(--crimson-title-height);
+  background:#131014; border-bottom:1px solid #2b2028;
+  -webkit-app-region:drag;
+}
+.window-controls {
+  top:0; right:0; height:var(--crimson-title-height);
+  background:#131014;
+}
+.window-controls button { height:var(--crimson-title-height); }
+.shell { height:100%; min-height:0; }
+.main { height:100%; min-height:0; }
+.login-layout { min-height:100%; }
+/* Reset earlier Windows-only spacing now that the entire layout starts
+   below a dedicated title strip, regardless of operating system. */
+body.crimson-windows .topbar,
+.topbar {
+  height:74px; min-height:74px; padding:8px 30px 0; gap:14px;
+}
+.top-actions { gap:14px; min-width:0; flex-wrap:nowrap; }
+.top-actions > * { flex-shrink:0; }
+.search-trigger { min-width:0; width:clamp(160px,21vw,235px); }
+body.crimson-windows .search-trigger { width:clamp(160px,21vw,235px); }
+body.crimson-windows .top-actions { gap:14px; }
+@media(max-width:1100px) {
+  body.crimson-windows .topbar,.topbar { padding-left:20px; padding-right:20px; }
+  body.crimson-windows .top-actions,.top-actions { gap:9px; }
+  .search-trigger,body.crimson-windows .search-trigger {width:165px;}
+  .search-trigger kbd {display:none;}
+}

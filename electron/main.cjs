@@ -143,7 +143,7 @@ function setupAutoUpdater() {
 }
 
 function makeWindow(){
-  win = new BrowserWindow({width:1440,height:900,minWidth:920,minHeight:620,backgroundColor:'#0a090b',icon:path.join(__dirname,'..','assets','crimsonfin.png'),titleBarStyle:'hidden',titleBarOverlay:process.platform==='win32'?{color:'#0a090b',symbolColor:'#f2e9e9',height:42}:false,autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+  win = new BrowserWindow({width:1440,height:900,minWidth:920,minHeight:620,backgroundColor:'#0a090b',icon:path.join(__dirname,'..','assets','crimsonfin.png'),frame:process.platform!=='win32',titleBarStyle:'hidden',titleBarOverlay:false,autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
   win.loadFile(path.join(__dirname,'..','dist','index.html'));
   win.webContents.setWindowOpenHandler(({url})=>{if(/^https?:\/\//.test(url))shell.openExternal(url);return{action:'deny'}});
   win.webContents.on('will-navigate',(event,url)=>{if(!url.startsWith('file://')) event.preventDefault()});

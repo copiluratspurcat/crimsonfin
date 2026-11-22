@@ -1,3 +1,4 @@
+document.body.classList.toggle('crimson-windows', window.crimson?.platform === 'win32');
 import Hls from 'hls.js';
 import './style.css';
 import brandLogo from '../assets/crimsonfin.svg';

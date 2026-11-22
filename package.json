@@ -1,6 +1,6 @@
 {
   "name": "crimsonfin",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "description": "CrimsonFin — a cinematic desktop client for Jellyfin",
   "author": {
     "name": "copiluratspurcat",
@@ -69,7 +69,7 @@
       {
         "provider": "github",
         "owner": "copiluratspurcat",
-        "repo": "crimsonfin",
+        "repo": "crimsonfin-downloads",
         "releaseType": "release"
       }
     ],
