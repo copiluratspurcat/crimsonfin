@@ -32,7 +32,7 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   let data: any;
   try { data = await response.json(); } catch { data = null; }
-  if (!response.ok) throw new Error(data?.error || `Request failed (${response.status})`);
+  if (!response.ok) throw Object.assign(new Error(data?.error || `Request failed (${response.status})`), { status: response.status });
   return data as T;
 }
 const q = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 40_000, refetchOnWindowFocus: false } } });
@@ -67,11 +67,24 @@ function App() {
   const recent = uniqueWatchEntries(resume.data?.Items ?? []);
   const upcoming = uniqueWatchEntries(recent, nextup.data?.Items ?? []);
   const both = [...(movies.data?.Items || []), ...(series.data?.Items || [])];
+  const libraryError = movies.error || series.error;
+  const sessionExpired = [movies.error, series.error, resume.error, nextup.error, search.error]
+    .some(error => error && 'status' in error && error.status === 401);
+  useEffect(() => {
+    if (sessionExpired) void qc.invalidateQueries({ queryKey: ['me'] });
+  }, [qc, sessionExpired]);
   const hero = both.find(i => i.CommunityRating && i.CommunityRating >= 7) || both[0];
   const open = (item: Item) => setSelected(item);
   const play = (item: Item) => { setSelected(null); setPlaying(item); };
   if (me.isPending) return <div className="boot"><div className="logo-mark large">C<span>F</span></div><p>Connecting to your cinema…</p></div>;
-  if (!me.data) return <Login onLogin={() => qc.invalidateQueries({ queryKey: ['me'] })} />;
+  if (me.isError && 'status' in me.error && me.error.status === 401) return <Login onLogin={() => {
+    qc.removeQueries({ predicate: query => query.queryKey[0] !== 'me' });
+    void qc.invalidateQueries({ queryKey: ['me'] });
+  }} />;
+  if (!me.data) return <div className="boot" role="alert">
+    <p>{me.error?.message || 'Could not reach your Jellyfin server.'}</p>
+    <button className="btn btn-ghost" onClick={() => void me.refetch()}>Retry connection</button>
+  </div>;
   const user = me.data.user;
   const navigations: { key: Tab; label: string; icon: React.ElementType }[] = [
     { key: 'home', label: 'Discover', icon: Home }, { key: 'movies', label: 'Movies', icon: Film },
@@ -91,8 +104,12 @@ function App() {
     </aside>
     <main className="main">
       <header className="topbar"><div className="breadcrumb"><span>YOUR LIBRARY</span><ChevronDown size={13}/><b>{navigations.find(x => x.key === tab)?.label}</b></div><div className="top-right"><span className="online"><i/> Connected · {connectionLabel}</span><button title="Search" className="top-search" onClick={() => setTab('search')}><Search size={18}/></button><div className="header-avatar">{user.name.slice(0,1).toUpperCase()}</div></div></header>
+      {libraryError && ['home', 'movies', 'series', 'favorites'].includes(tab) && <div className="setting-card" role="alert">
+        <p>{libraryError.message}</p>
+        <button className="btn btn-ghost" onClick={() => { void movies.refetch(); void series.refetch(); }}>Retry library</button>
+      </div>}
       {tab === 'home' && <>
-        {hero ? <div className="hero" style={{ backgroundImage: `linear-gradient(90deg, rgba(9,13,22,.99) 0%, rgba(9,13,22,.83) 37%, rgba(9,13,22,.17) 100%), linear-gradient(0deg,#0b1019 1%,transparent 42%), url('${art(hero.Id, 'Backdrop')}')` }}><div className="hero-content"><div className="eyebrow"><Sparkles size={13}/> FEATURED IN YOUR LIBRARY</div><h1>{hero.Name}</h1><div className="meta"><span>{hero.ProductionYear || 'Movie & TV'}</span>{hero.CommunityRating && <span className="rating">★ {hero.CommunityRating.toFixed(1)}</span>}{hero.Genres?.slice(0,2).map(g => <span key={g}>{g}</span>)}</div><p>{hero.Overview || 'Discover something great from your own library.'}</p><div className="hero-actions"><button className="btn btn-primary" onClick={() => hero.Type === 'Series' ? open(hero) : play(hero)}><Play size={17} fill="currentColor"/>{hero.Type === 'Series' ? 'Explore episodes' : 'Watch now'}</button><button className="btn btn-ghost" onClick={() => open(hero)}>More details <ArrowRight size={17}/></button></div></div></div> : <div className="empty-feature"><h1>Your cinema starts here.</h1><p>There are no movies or TV shows available to this Jellyfin account yet.</p></div>}
+        {hero ? <div className="hero" style={{ backgroundImage: `linear-gradient(90deg, rgba(9,13,22,.99) 0%, rgba(9,13,22,.83) 37%, rgba(9,13,22,.17) 100%), linear-gradient(0deg,#0b1019 1%,transparent 42%), url('${art(hero.Id, 'Backdrop')}')` }}><div className="hero-content"><div className="eyebrow"><Sparkles size={13}/> FEATURED IN YOUR LIBRARY</div><h1>{hero.Name}</h1><div className="meta"><span>{hero.ProductionYear || 'Movie & TV'}</span>{hero.CommunityRating && <span className="rating">★ {hero.CommunityRating.toFixed(1)}</span>}{hero.Genres?.slice(0,2).map(g => <span key={g}>{g}</span>)}</div><p>{hero.Overview || 'Discover something great from your own library.'}</p><div className="hero-actions"><button className="btn btn-primary" onClick={() => hero.Type === 'Series' ? open(hero) : play(hero)}><Play size={17} fill="currentColor"/>{hero.Type === 'Series' ? 'Explore episodes' : 'Watch now'}</button><button className="btn btn-ghost" onClick={() => open(hero)}>More details <ArrowRight size={17}/></button></div></div></div> : <div className="empty-feature"><h1>{libraryError ? 'Library unavailable' : movies.isPending || series.isPending ? 'Loading your library…' : 'Your cinema starts here.'}</h1>{!libraryError && !movies.isPending && !series.isPending && <p>There are no movies or TV shows available to this Jellyfin account yet.</p>}</div>}
         <div className="shelves">{showShelf('Continue watching', recent, 'Pick up right where you left off')}{showShelf('Just added', movies.data?.Items.slice(0, 15), 'Fresh arrivals to your library')}{showShelf('Series to discover', series.data?.Items.slice(0, 15))}{showShelf('Up next', upcoming.slice(recent.length))}</div>
       </>}
       {tab === 'movies' && <Collection title="Movies" subtitle="Every film in your Jellyfin library" items={movies.data?.Items} loading={movies.isLoading} onOpen={open} onPlay={play} />}

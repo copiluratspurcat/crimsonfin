@@ -1,6 +1,6 @@
 {
   "name": "crimsonfin-client",
-  "version": "2.5.5",
+  "version": "2.5.6",
   "private": true,
   "main": "desktop/main.cjs",
   "description": "Custom Jellyfin client, secure gateway and FileList-backed media requests",
@@ -46,6 +46,7 @@
       "package.json"
     ],
     "win": {
+      "artifactName": "${productName}-Setup-${version}.${ext}",
       "target": [
         "nsis"
       ]

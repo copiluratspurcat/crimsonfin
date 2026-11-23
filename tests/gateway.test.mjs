@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import { createAppServer, rewriteM3u8 } from '../server/index.mjs';
 
 const VIDEO = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
-function upstream() {
+function upstream(isRevoked = () => false) {
   return http.createServer(async (req, res) => {
     const p = new URL(req.url, 'http://localhost');
     if (p.pathname === '/Users/AuthenticateByName') {
@@ -17,7 +17,7 @@ function upstream() {
         Id: VIDEO, Name: data.Username, Policy: { IsAdministrator: data.Username === 'admin' }
       } })); return;
     }
-    if (!req.headers.authorization?.includes('Token="jellyfin-private-token-123"')) { res.writeHead(401); res.end(); return; }
+    if (isRevoked() || !req.headers.authorization?.includes('Token="jellyfin-private-token-123"')) { res.writeHead(401); res.end(); return; }
     if (p.pathname.includes('/Subtitles/') && p.pathname.endsWith('/Stream.vtt')) { res.setHeader('content-type', 'text/vtt'); res.end('WEBVTT\n\n00:00:01.000 --> 00:00:02.500\nSalut!'); return; }
     if (p.pathname.includes('master.m3u8')) { res.setHeader('content-type', 'application/vnd.apple.mpegurl'); res.end(`#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=450000\n/Videos/${VIDEO}/hls1/main/0.ts?ApiKey=jellyfin-private-token-123\n`); return; }
     if (p.pathname.includes('/hls1/main/0.ts') || p.pathname.includes('/stream')) {
@@ -38,8 +38,8 @@ function upstream() {
 async function begin(server) { server.listen(0, '127.0.0.1'); await once(server, 'listening'); return `http://127.0.0.1:${server.address().port}`; }
 function end(server) { return new Promise(resolve => server.close(resolve)); }
 
-async function fixture(t) {
-  const jf = upstream(); const jellyfinUrl = await begin(jf);
+async function fixture(t, isRevoked) {
+  const jf = upstream(isRevoked); const jellyfinUrl = await begin(jf);
   const gateway = createAppServer({ dbPath: ':memory:', env: { JELLYFIN_URL: jellyfinUrl, NODE_ENV: 'development', SESSION_ENCRYPTION_KEY: Buffer.alloc(32, 5).toString('base64') } });
   const url = await begin(gateway.server);
   t.after(async () => { await end(gateway.server); await end(jf); gateway.db.close(); });
@@ -140,4 +140,17 @@ test('Romanian subtitle coverage is visible to admins only', async t => {
 
 test('playlist URL allowlist blocks external URLs', () => {
   assert.throws(() => rewriteM3u8('#EXTM3U\nhttps://example.com/evil.ts', 'http://localhost/Videos/' + VIDEO + '/master.m3u8', 'http://localhost'));
+});
+
+test('a revoked Jellyfin login is rejected and can be replaced by a new sign-in', async t => {
+  let revoked = false;
+  const { request, login, gateway } = await fixture(t, () => revoked);
+  const cookie = await login();
+  assert.equal((await request('/api/auth/me', cookie)).status, 200);
+  revoked = true;
+  assert.equal((await request('/api/auth/me', cookie)).status, 401);
+  assert.equal(gateway.db.prepare('SELECT COUNT(*) AS n FROM sessions').get().n, 0);
+  revoked = false;
+  assert.equal((await request('/api/auth/me', cookie)).status, 401);
+  assert.equal((await request('/api/auth/me', await login())).status, 200);
 });

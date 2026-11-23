@@ -182,7 +182,12 @@ export function createAppServer(options = {}) {
     const timeout = setTimeout(() => controller.abort(), 12000);
     try {
       const response = await fetchImpl(jellyfinBase + relative, { ...init, headers, signal: controller.signal, redirect: 'manual' });
-      if (!response.ok) failure(response.status === 401 || response.status === 403 ? 'Jellyfin rejected this account' : 'Jellyfin is temporarily unavailable', response.status === 401 || response.status === 403 ? 401 : 502);
+      if (response.status === 401) {
+        db.prepare('DELETE FROM sessions WHERE id_hash = ?').run(session.sessionHash);
+        failure('Your Jellyfin session expired. Sign in again.', 401);
+      }
+      if (response.status === 403) failure('Jellyfin denied access to this resource', 403);
+      if (!response.ok) failure('Jellyfin is temporarily unavailable', 502);
       if (response.status === 204 || response.headers.get('content-length') === '0') return { ok: true };
       const raw = await response.text();
       return raw ? JSON.parse(raw) : { ok: true };
@@ -308,7 +313,10 @@ export function createAppServer(options = {}) {
       if (pathname.startsWith('/api/') || pathname.startsWith('/jellyfin/')) {
         const user = await requireSession(req);
         if (pathname.startsWith('/jellyfin/')) return await streamJellyfin(req, res, user, pathname.slice('/jellyfin'.length), url.search);
-        if (pathname === '/api/auth/me' && req.method === 'GET') return json(res, 200, { user: { id: user.userId, name: user.userName, isAdmin: user.isAdmin } });
+        if (pathname === '/api/auth/me' && req.method === 'GET') {
+          await jellyfin('/Users/Me', user);
+          return json(res, 200, { user: { id: user.userId, name: user.userName, isAdmin: user.isAdmin } });
+        }
         if (pathname === '/api/library' && req.method === 'GET') {
           const type = url.searchParams.get('type') === 'series' ? 'Series' : 'Movie';
           return json(res, 200, await jellyfin(`/Users/${user.userId}/Items?${new URLSearchParams({

@@ -100,8 +100,7 @@ jobs:
       - name: Validate update feed manifests
         shell: bash
         run: |
-          test -s release-assets/latest.yml
-          test -s release-assets/latest-linux.yml
+          python3 scripts/verify-update-manifests.py release-assets
           find release-assets -maxdepth 1 -type f -name '*.exe' -size +40M | grep -q .
       - uses: softprops/action-gh-release@v2
         with:
