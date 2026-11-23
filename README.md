@@ -175,3 +175,7 @@ The desktop client checks for a certificate-pinned HTTPS gateway on the local ne
 The server can run `scripts/repair-episode-metadata.mjs` via an optional systemd user timer. It only replaces uncertain/generic episode titles when it finds a positively matched title in TVMaze, and saves a local backup of every changed Jellyfin record. Some official catalogs also use titles such as Episode 1, so a missing title cannot always be resolved.
 
 The full FileList API uses the **FileList-specific username** and the private feed/API passkey. Administrators can configure this in CrimsonFin → Admin → FileList. RSS-only search remains available if no username is configured. The API uses HTTP Basic credentials over HTTPS and never sends the passkey in URL parameters or to the web browser. Admin-only torrent fetching and queuing to the loopback-only qBittorrent instance requires `QBIT_URL`, `QBIT_USERNAME`, `QBIT_PASSWORD`, and optionally `QBIT_SAVE_PATH` in the **private server .env**. Media request users are not allowed to trigger torrent downloads.
+
+### v2.1.1 Windows/LAN reliability fix
+
+Fixed a certificate pinning bug in Electron that rejected an otherwise valid self-signed LAN certificate and fell back to slow remote Funnel access. The desktop now calculates the actual SHA-256 fingerprint from Electron PEM certificate data before comparing it with the pinned value. Request timeouts now report a clear error instead of leaving FileList settings indefinitely stuck on Saving. Reinstall the v2.1.1 desktop client to receive the routing fix.

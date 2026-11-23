@@ -12,8 +12,17 @@ type RequestEntry = { id: string; user_name: string; title: string; kind: 'movie
 type Tab = 'home' | 'movies' | 'series' | 'search' | 'continue' | 'favorites' | 'requests' | 'settings' | 'admin';
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { credentials: 'same-origin', ...init,
-    headers: { ...(init.body ? { 'content-type': 'application/json' } : {}), ...init.headers } });
+  let response: Response;
+  try {
+    response = await fetch(path, { credentials: 'same-origin', ...init,
+      signal: init.signal || AbortSignal.timeout(20000),
+      headers: { ...(init.body ? { 'content-type': 'application/json' } : {}), ...init.headers } });
+  } catch (error) {
+    if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+      throw new Error('The server took too long to respond. Check your connection and try again.');
+    }
+    throw error;
+  }
   let data: any;
   try { data = await response.json(); } catch { data = null; }
   if (!response.ok) throw new Error(data?.error || `Request failed (${response.status})`);
@@ -189,7 +198,7 @@ function Admin() {
   const requests = useQuery({ queryKey: ['requests'], queryFn: () => api<{ requests: RequestEntry[] }>('/api/requests') });
   const status = useQuery({ queryKey: ['adminStatus'], queryFn: () => api<{ jellyfinReachable: boolean; filelistConfigured: boolean; pendingRequests: number }>('/api/admin/status'), refetchInterval: 45000 });
   const mutate = useMutation({ mutationFn: (arg: { id: string; status: string }) => api(`/api/requests/${arg.id}`, { method: 'PATCH', body: JSON.stringify({ status: arg.status }) }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['requests'] }); qc.invalidateQueries({ queryKey: ['adminStatus'] }); } });
-  return <section className="content-section"><div className="heading"><p className="eyebrow">ADMINISTRATOR ACCESS</p><h1>Server & requests</h1><p>Review your server's connection and manage media suggestions.</p></div><div className="admin-stats"><div className="stat"><small>JELLYFIN CONNECTION</small><strong>{status.data?.jellyfinReachable ? 'Connected' : 'Not connected'}</strong></div><div className="stat"><small>FILELIST INTEGRATION</small><strong>{status.data?.filelistConfigured ? 'Configured' : 'Not configured'}</strong></div><div className="stat"><small>PENDING REQUESTS</small><strong>{status.data?.pendingRequests ?? '–'}</strong></div></div><div className="panel admin-list"><h2>Review requests</h2>{requests.data?.requests.length ? requests.data.requests.map(r => <div className="review-row" key={r.id}><div><strong>{r.title}</strong><small>{r.user_name} · {r.kind}{r.year ? ` · ${r.year}` : ''} · {r.notes || 'No additional notes'}</small></div><select disabled={mutate.isPending} aria-label={`Status for ${r.title}`} value={r.status} onChange={e => mutate.mutate({ id: r.id, status: e.target.value })}><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="fulfilled">Fulfilled</option></select></div>) : <div className="empty-state">No requests to review.</div>}{mutate.error && <p className="error">{mutate.error.message}</p>}</div><FileListConfiguration /></section>;
+  return <section className="content-section"><div className="heading"><p className="eyebrow">ADMINISTRATOR ACCESS</p><h1>Server & requests</h1><p>Review your server's connection and manage media suggestions.</p></div><div className="admin-stats"><div className="stat"><small>JELLYFIN CONNECTION</small><strong>{status.isLoading ? 'Checking…' : status.isError ? 'Unavailable' : status.data?.jellyfinReachable ? 'Connected' : 'Not connected'}</strong></div><div className="stat"><small>FILELIST INTEGRATION</small><strong>{status.isLoading ? 'Checking…' : status.isError ? 'Unavailable' : status.data?.filelistConfigured ? 'Configured' : 'Not configured'}</strong></div><div className="stat"><small>PENDING REQUESTS</small><strong>{status.data?.pendingRequests ?? '–'}</strong></div></div><div className="panel admin-list"><h2>Review requests</h2>{requests.data?.requests.length ? requests.data.requests.map(r => <div className="review-row" key={r.id}><div><strong>{r.title}</strong><small>{r.user_name} · {r.kind}{r.year ? ` · ${r.year}` : ''} · {r.notes || 'No additional notes'}</small></div><select disabled={mutate.isPending} aria-label={`Status for ${r.title}`} value={r.status} onChange={e => mutate.mutate({ id: r.id, status: e.target.value })}><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="fulfilled">Fulfilled</option></select></div>) : <div className="empty-state">No requests to review.</div>}{mutate.error && <p className="error">{mutate.error.message}</p>}</div><FileListConfiguration /></section>;
 }
 
 
@@ -203,7 +212,8 @@ function FileListConfiguration() {
   const [dirty, setDirty] = useState(false);
   useEffect(() => { if (settings.data && !dirty) setUsername(settings.data.username || ''); }, [settings.data, dirty]);
   const save = useMutation({ mutationFn: () => api('/api/admin/filelist/settings', {
-    method: 'POST', body: JSON.stringify({ username, ...(passkey.trim() ? { passkey: passkey.trim() } : {}) })
+    method: 'POST', body: JSON.stringify({ username, ...(passkey.trim() ? { passkey: passkey.trim() } : {}) }),
+    signal: AbortSignal.timeout(10000)
   }), onSuccess: () => {
     setPasskey(''); setDirty(false);
     qc.invalidateQueries({ queryKey: ['filelistAdminSettings'] });

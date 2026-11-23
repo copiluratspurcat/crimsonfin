@@ -2,11 +2,23 @@
 const https = require('node:https');
 const dgram = require('node:dgram');
 const os = require('node:os');
-const { randomBytes } = require('node:crypto');
+const { randomBytes, X509Certificate } = require('node:crypto');
 
 function normalizeFingerprint(value) {
   return String(value || '').replace(/[^a-f0-9]/gi, '').toUpperCase();
 }
+// Electron's certificate.fingerprint is not guaranteed to be a SHA-256
+// digest. Compute it from the actual PEM certificate using Node crypto.
+function matchesPinnedCertificate(origin, approvedOrigin, certificate, expectedFingerprint) {
+  if (!origin || origin !== approvedOrigin || !certificate?.data) return false;
+  const expected = normalizeFingerprint(expectedFingerprint);
+  if (expected.length !== 64) return false;
+  try {
+    const actual = normalizeFingerprint(new X509Certificate(certificate.data).fingerprint256);
+    return actual === expected;
+  } catch { return false; }
+}
+
 function localOrigin(config) {
   const c = config?.local;
   if (!c || typeof c.host !== 'string' || !/^([a-z0-9-]+\.)*local$/i.test(c.host) ||
@@ -101,4 +113,4 @@ async function probeLocal(config, timeoutMs = 2800) {
   })).catch(() => null);
   return winner;
 }
-module.exports = { normalizeFingerprint, localOrigin, probeLocal, discoverLanHosts, privateIpv4 };
+module.exports = { normalizeFingerprint, matchesPinnedCertificate, localOrigin, probeLocal, discoverLanHosts, privateIpv4 };

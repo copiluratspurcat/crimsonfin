@@ -2,7 +2,7 @@
 const { app, BrowserWindow, Menu, shell, session } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
-const { probeLocal, localOrigin, normalizeFingerprint } = require('./local-route.cjs');
+const { probeLocal, matchesPinnedCertificate } = require('./local-route.cjs');
 
 function getConfig() {
   const files = [path.join(__dirname, 'config.json'), path.join(__dirname, 'release-target.json')];
@@ -24,16 +24,16 @@ function trustedRemote(raw) {
 const config = getConfig();
 const remote = trustedRemote(process.env.CRIMSONFIN_URL || config.url);
 let approvedLocalOrigin = null;
-const localFingerprint = normalizeFingerprint(config.local?.fingerprint256);
+
 
 // The only certificate exception is a pinned self-signed LAN certificate
 // for this particular CrimsonFin device. Never disable TLS verification globally.
 app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
   try {
     const incoming = new URL(url);
-    const pinned = incoming.origin === approvedLocalOrigin &&
-      normalizeFingerprint(certificate?.fingerprint) === localFingerprint &&
-      localFingerprint.length === 64;
+    const pinned = matchesPinnedCertificate(
+      incoming.origin, approvedLocalOrigin, certificate, config.local?.fingerprint256
+    );
     if (pinned) {
       event.preventDefault();
       callback(true);
