@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isFilelistMediaCategory } from './filelist-categories.mjs';
 import { XMLParser } from 'fast-xml-parser';
 
 const parser = new XMLParser({
@@ -29,7 +30,7 @@ function normalized(value) {
     .replace(/[._\-\[\]()]+/g, ' ').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
-export function parseFilelistRss(xml, query) {
+export function parseFilelistRss(xml, query, categories) {
   if (typeof xml !== 'string' || Buffer.byteLength(xml) > 2_000_000) {
     throw new Error('Invalid FileList RSS response');
   }
@@ -39,6 +40,8 @@ export function parseFilelistRss(xml, query) {
   const entries = Array.isArray(channel.item) ? channel.item : [channel.item];
   const terms = normalized(query).split(' ').filter(Boolean);
   const results = entries.map(entry => {
+    const entryCategories = Array.isArray(entry?.category) ? entry.category : [entry?.category];
+    if (!entryCategories.some(category => isFilelistMediaCategory(category?.['#text'] ?? category, categories))) return null;
     const name = safeTitle(entry?.title?.['#text'] ?? entry?.title);
     if (!name || !terms.every(term => normalized(name).includes(term))) return null;
     // Never return RSS enclosure URLs, GUIDs, or descriptions: they may contain

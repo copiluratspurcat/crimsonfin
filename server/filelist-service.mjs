@@ -1,5 +1,6 @@
 import { buildFilelistApiUrl, parseFilelistApiResults, privateDownloadUrl } from './filelist-api.mjs';
 import { validateFilelistRssUrl, parseFilelistRss } from './filelist-rss.mjs';
+import { allowedFilelistCategories } from './filelist-categories.mjs';
 import { parseTorrentSizeBytes } from './download-manager.mjs';
 
 export function createFilelistService({ env, db, crypto, downloadManager, fetchImpl = fetch }) {
@@ -60,7 +61,9 @@ export function createFilelistService({ env, db, crypto, downloadManager, fetchI
     const { username, passkey } = getCredentials();
     const api = Boolean(username && passkey);
     if (!api && !env.FILELIST_RSS_URL) return { configured: false, source: 'none', results: [] };
-    const key = (api ? 'api:' : 'rss:') + query.toLowerCase() + ':' + category;
+    const categories = allowedFilelistCategories(category);
+    if (!categories) return { configured: true, source: api ? 'api' : 'rss', results: [] };
+    const key = (api ? 'api:' : 'rss:') + query.toLowerCase() + ':' + categories;
     const cached = searchCache.get(key);
     if (cached && cached.until > Date.now()) {
       // Authenticated admins still need link ownership for the subsequent torrent download.
@@ -78,11 +81,11 @@ export function createFilelistService({ env, db, crypto, downloadManager, fetchI
           signal: controller.signal, redirect: 'error', headers: { accept: 'application/rss+xml, application/xml, text/xml' }
         });
         if (!response.ok) throw Object.assign(new Error('FileList RSS unavailable'), { status: 502 });
-        const value = parseFilelistRss(await response.text(), query);
+        const value = parseFilelistRss(await response.text(), query, categories);
         searchCache.set(key, { until: Date.now() + 300000, value });
         return value;
       }
-      const requestUrl = buildFilelistApiUrl(query, category);
+      const requestUrl = buildFilelistApiUrl(query, categories);
       const authorization = 'Basic ' + Buffer.from(username + ':' + passkey).toString('base64');
       const response = await fetchImpl(requestUrl, {
         signal: controller.signal, redirect: 'error',
@@ -94,7 +97,7 @@ export function createFilelistService({ env, db, crypto, downloadManager, fetchI
       if (response.status === 429) throw Object.assign(new Error('FileList API rate limit reached'), { status: 429 });
       if (!response.ok) throw Object.assign(new Error('FileList API unavailable'), { status: 502 });
       const data = await response.json();
-      const parsed = parseFilelistApiResults(data);
+      const parsed = parseFilelistApiResults(data, categories);
       const until = Date.now() + 300000;
       const value = { configured: true, source: 'api', results: parsed.results };
       searchCache.set(key, { value, until, links: parsed.links });

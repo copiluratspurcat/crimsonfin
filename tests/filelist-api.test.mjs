@@ -15,10 +15,12 @@ test('FileList API uses an authenticated GET without a passkey in the URL', asyn
       assert.equal(u.searchParams.get('action'), 'search-torrents');
       assert.equal(u.searchParams.get('type'), 'name');
       assert.equal(u.searchParams.get('query'), 'Example Film');
+      assert.deepEqual(new Set(u.searchParams.get('category').split(',')),
+        new Set(['1','2','3','4','6','19','20','25','26','21','23','27','24']));
       assert.equal(u.searchParams.has('passkey'), false);
       assert.equal(init.headers.authorization, 'Basic ' + Buffer.from('sample-user:sample-passkey').toString('base64'));
-      return Response.json([{ id: 42, name: 'Example.Film.2026.1080p', size: '1 GB', seeders: 14,
-        download_link: 'https://filelist.io/download.php?id=42&passkey=never-expose-this' }]);
+      return Response.json([{ id: 42, name: 'Example.Film.2026.1080p', size: '1 GB', seeders: 14, category: '4',
+        download_link: 'https://filelist.io/download.php?id=42&passkey=never-expose-this' }, { id: 43, name: 'Example.Game', category: '9' }]);
     }
     if (u.hostname === 'filelist.io' && u.pathname === '/download.php') {
       torrentCalls++;
@@ -47,6 +49,8 @@ test('FileList API uses an authenticated GET without a passkey in the URL', asyn
   assert.equal(search.source, 'api');
   assert.equal(search.results[0].name, 'Example.Film.2026.1080p');
   assert.equal(search.results[0].downloadable, true);
+  assert.equal(search.results.length, 1);
+  assert.deepEqual((await app.search('Example Film', 'admin-user', '9')).results, []);
   assert.doesNotMatch(JSON.stringify(search), /never-expose|sample-passkey|download.php/);
   const found = await app.search('Example Film', 'admin-user');
   assert.deepEqual(found, search);

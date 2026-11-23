@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createAppServer } from '../server/index.mjs';
 
-const xml = '<rss><channel><item><title>Example.Movie.2026.1080p</title>' +
+const xml = '<rss><channel><item><title>Example.Movie.2026.1080p</title><category>4</category>' +
   '<guid>https://filelist.io/download.php?passkey=never-send-this</guid>' +
   '</item></channel></rss>';
 const user = 'eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee';

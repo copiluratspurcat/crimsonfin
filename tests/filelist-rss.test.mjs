@@ -4,11 +4,13 @@ import { parseFilelistRss, validateFilelistRssUrl } from '../server/filelist-rss
 
 const rss = `<?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0"><channel><title>FileList</title>
-<item><title>Example.Movie.2026.1080p</title>
+<item><title>Example.Movie.2026.1080p</title><category>Filme HD</category>
 <link>https://filelist.io/download.php?id=42&amp;passkey=do-not-expose</link>
 <guid>https://filelist.io/download.php?id=42&amp;passkey=do-not-expose</guid>
 <description>Download using passkey=do-not-expose</description></item>
-<item><title>Another.Series.S01.720p</title><link>https://filelist.io/download.php?passkey=secret</link></item>
+<item><title>Another.Series.S01.720p</title><category>21</category><link>https://filelist.io/download.php?passkey=secret</link></item>
+<item><title>Example.Movie.Game</title><category>9</category></item>
+<item><title>Example.Movie.Unclassified</title></item>
 </channel></rss>`;
 
 test('RSS catalog search matches only recent entry titles and hides tracker links', () => {

@@ -1,3 +1,5 @@
+import { isFilelistMediaCategory } from './filelist-categories.mjs';
+
 const FILELIST_API = 'https://filelist.io/api.php';
 
 export function buildFilelistApiUrl(query, category = '') {
@@ -27,13 +29,16 @@ export function privateDownloadUrl(link) {
   } catch { return null; }
 }
 
-export function parseFilelistApiResults(data) {
+export function parseFilelistApiResults(data, categories) {
   const list = Array.isArray(data) ? data :
     Array.isArray(data?.data) ? data.data :
     Array.isArray(data?.torrents) ? data.torrents :
     Array.isArray(data?.results) ? data.results : [];
   const results = [], links = new Map();
   for (const item of list.slice(0, 70)) {
+    // The API has already filtered the request. If the response also declares
+    // a category, reject any row that falls outside that request.
+    if (item?.category != null && !isFilelistMediaCategory(item.category, categories)) continue;
     const id = String(item?.id ?? '');
     const name = String(item?.name || item?.title || '').trim();
     if (!/^\d{1,12}$/.test(id) || !name || name.length > 230) continue;
