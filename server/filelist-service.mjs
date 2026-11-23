@@ -1,7 +1,8 @@
 import { buildFilelistApiUrl, parseFilelistApiResults, privateDownloadUrl } from './filelist-api.mjs';
 import { validateFilelistRssUrl, parseFilelistRss } from './filelist-rss.mjs';
+import { parseTorrentSizeBytes } from './download-manager.mjs';
 
-export function createFilelistService({ env, db, crypto, fetchImpl = fetch }) {
+export function createFilelistService({ env, db, crypto, downloadManager, fetchImpl = fetch }) {
   const searchCache = new Map();
   const downloadLinks = new Map();
   const quota = new Map();
@@ -64,7 +65,7 @@ export function createFilelistService({ env, db, crypto, fetchImpl = fetch }) {
     if (cached && cached.until > Date.now()) {
       // Authenticated admins still need link ownership for the subsequent torrent download.
       if (cached.links) for (const [id, link] of cached.links) {
-        downloadLinks.set(userId + ':' + id, { link, until: cached.until });
+        downloadLinks.set(userId + ':' + id, { link, until: cached.until, sizeBytes: parseTorrentSizeBytes(cached.value.results.find(x => x.id === id)?.size) });
       }
       return cached.value;
     }
@@ -97,7 +98,7 @@ export function createFilelistService({ env, db, crypto, fetchImpl = fetch }) {
       const until = Date.now() + 300000;
       const value = { configured: true, source: 'api', results: parsed.results };
       searchCache.set(key, { value, until, links: parsed.links });
-      for (const [id, link] of parsed.links) downloadLinks.set(userId + ':' + id, { link, until });
+      for (const [id, link] of parsed.links) downloadLinks.set(userId + ':' + id, { link, until, sizeBytes: parseTorrentSizeBytes(parsed.results.find(x => x.id === id)?.size) });
       if (downloadLinks.size > 500) {
         for (const [id, val] of downloadLinks) if (val.until < Date.now()) downloadLinks.delete(id);
       }
@@ -126,36 +127,15 @@ export function createFilelistService({ env, db, crypto, fetchImpl = fetch }) {
       return buffer;
     } finally { clearTimeout(timeout); }
   }
-  async function queueTorrent(userId, torrentId) {
-    const cfg = status();
-    if (!cfg.downloaderConfigured) throw Object.assign(new Error('Configure qBittorrent on the server to queue downloads'), { status: 503 });
-    const base = new URL(env.QBIT_URL);
-    if (base.protocol !== 'http:' || !['127.0.0.1','localhost','::1'].includes(base.hostname) ||
-        base.username || base.password || base.search || base.hash) throw Object.assign(new Error('Invalid download client URL'), { status: 503 });
-    const file = await torrentFor(userId, torrentId);
-    const login = await fetchImpl(new URL('/api/v2/auth/login', base), {
-      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(8000),
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ username: env.QBIT_USERNAME, password: env.QBIT_PASSWORD })
-    });
-    if (!login.ok || !(await login.text()).includes('Ok.')) {
-      throw Object.assign(new Error('qBittorrent authentication failed'), { status: 502 });
+  async function queueTorrent(userId, torrentId, kind = 'movie') {
+    if (!downloadManager) throw Object.assign(new Error('qBittorrent download manager unavailable'), { status: 503 });
+    if (!['movie', 'series'].includes(kind)) {
+      throw Object.assign(new Error('Choose Movie or TV Show'), { status: 400 });
     }
-    const cookie = login.headers.get('set-cookie')?.split(';')[0] || '';
-    if (!/^SID=[^;]+$/.test(cookie)) throw Object.assign(new Error('Download client did not issue a valid session'), { status: 502 });
-    const body = new FormData();
-    body.append('torrents', new Blob([file], { type: 'application/x-bittorrent' }), 'release.torrent');
-    // qBittorrent 5 uses 'stopped', replacing the older 'paused' setting.
-    body.append('stopped', 'false');
-    if (env.QBIT_SAVE_PATH) body.append('savepath', env.QBIT_SAVE_PATH);
-    const result = await fetchImpl(new URL('/api/v2/torrents/add', base), {
-      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(12000),
-      headers: { cookie, referer: base.origin + '/' }, body
-    });
-    if (!result.ok || !(await result.text()).includes('Ok.')) {
-      throw Object.assign(new Error('qBittorrent did not accept the torrent'), { status: 502 });
-    }
-    return { ok: true, queued: true };
+    // Validate and obtain the tracker torrent before writing anything.
+    const torrent = await torrentFor(userId, torrentId);
+    const metadata = downloadLinks.get(userId + ':' + torrentId);
+    return downloadManager.queueTorrentFile(torrent, kind, metadata?.sizeBytes || 0);
   }
   return { status, configure, search, torrentFor, queueTorrent };
 }

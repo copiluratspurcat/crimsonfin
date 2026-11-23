@@ -369,3 +369,52 @@ input[type="range"] { accent-color:var(--cf-accent); }
 .subtitle-progress { margin:18px 0 10px;background:#321724;height:9px;border-radius:99px;overflow:hidden; }
 .subtitle-progress i { display:block;height:100%;background:linear-gradient(90deg,#a61541,#ff547a);box-shadow:0 0 22px #fd245e60;border-radius:inherit; }
 @media(max-width:650px){.subtitle-numbers{grid-template-columns:1fr;}}
+
+
+/* Downloads: live torrent progress and each physical library drive */
+.downloads-page .heading { margin-bottom:28px; }
+.download-summary {display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin:5px 0 31px;}
+.download-summary>div {display:flex;align-items:center;gap:9px;background:#24131c;border:1px solid #603145;
+ border-radius:11px;padding:12px 15px;font-size:12px;font-weight:750;color:#ffced9;}
+.download-summary>button {display:flex;gap:8px;align-items:center;border:1px solid #663347;background:#2b1420;
+ color:#ffc2d1;border-radius:10px;padding:11px 16px;font-size:12px;font-weight:700;margin-left:auto;cursor:pointer;}
+.download-summary>button:hover {background:#452338;}
+.download-heading {display:flex;align-items:center;gap:11px;font-size:20px;color:#fff2f5;margin:32px 0 17px;}
+.download-heading>svg {color:#ff587f;}
+.drive-cards {display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:17px;}
+.drive-card {background:linear-gradient(140deg,#26131d,#130b10);border:1px solid #673147;
+ border-radius:16px;padding:21px;box-shadow:0 9px 28px #07020550;}
+.drive-head {display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.drive-head>span {display:flex;align-items:center;gap:9px;font-size:15px;font-weight:800;}
+.drive-head>span svg {color:#ff7190;}
+.drive-head small {background:#5f1936;border:1px solid #a33257;color:#ffabc1;
+ font-size:9px;font-weight:800;letter-spacing:.5px;padding:6px 9px;border-radius:999px;}
+.drive-free {font-size:30px;font-weight:850;letter-spacing:-.8px;color:#fff4f7;display:block;margin-top:27px;}
+.drive-free>span {font-size:12px;color:#b49aa8;font-weight:600;letter-spacing:0;}
+.drive-meter,.download-meter {background:#3c1a2c;border-radius:99px;height:9px;overflow:hidden;}
+.drive-meter {margin-top:13px;}
+.drive-meter>i,.download-meter>i {display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#b8204b,#ff557c);
+ transition:width 400ms ease;}
+.drive-card>p {color:#bea3b2;font-size:11px;margin:10px 0 22px;}
+.drive-path {display:flex;align-items:center;gap:9px;font-size:11px;color:#cda8b8;
+ border-top:1px solid #4a2938;padding:10px 0 0;margin-top:9px;}
+.drive-path svg {flex-shrink:0;color:#fe7192;}.drive-path>span {overflow-wrap:anywhere;}
+.drive-note {font-size:12px;color:#b99aa8;line-height:1.7;margin:13px 0 38px;}
+.download-connected {font-size:11px;font-weight:750;color:#81dcb0;display:flex;gap:7px;align-items:center;margin-left:auto;}
+.download-list {display:flex;flex-direction:column;gap:14px;}
+.download-entry {background:linear-gradient(105deg,#261420,#171019);border:1px solid #5e3044;
+ border-radius:14px;padding:19px 22px;}
+.download-entry-head {display:flex;gap:15px;align-items:center;justify-content:space-between;}
+.download-entry-head>div {flex:1;min-width:0;}
+.download-entry-head>div>strong {font-size:13px;overflow-wrap:anywhere;display:block;color:#fff1f5;}
+.download-entry-head>div>small {font-size:11px;display:block;margin-top:7px;color:#a6899b;}
+.download-entry-head>strong {color:#ff7697;font-size:19px;font-variant-numeric:tabular-nums;}
+.download-meter {height:10px;margin-top:18px;}
+.download-details {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:13px;
+ font-size:11px;color:#c6adba;font-variant-numeric:tabular-nums;}
+.download-location {font-size:10px;color:#866f7b;display:block;margin-top:13px;overflow-wrap:anywhere;}
+.download-kind-label {display:block;color:#ff9eb7;font-size:10px;font-weight:850;letter-spacing:1px;margin:16px 0 10px;}
+.download-kind-label select {display:block;width:100%;max-width:280px;background:#281521;border:1px solid #7c3651;
+ color:#fff0f4;border-radius:10px;padding:11px 12px;margin-top:7px;font-size:12px;letter-spacing:0;}
+.show-downloads {margin-top:16px;}
+@media(max-width:740px){.download-details{grid-template-columns:repeat(2,minmax(0,1fr));}.drive-free{font-size:25px;}}

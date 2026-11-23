@@ -226,3 +226,40 @@ stream. The subtitle audit never exposes server API keys or the underlying
 media paths to CrimsonFin users. Subtitle file provenance and human translation
 quality cannot be fully guaranteed automatically; inspect uncertain matches
 before using them as permanent replacements.
+
+## v2.3 — Download progress and automatic disk selection
+
+The authenticated **Downloads** navigation tab is available to Jellyfin
+administrators. It refreshes qBittorrent progress every 3.5 seconds and shows
+download speed, upload speed, percentage, state, ETA, and destination folder.
+Its three drive cards report available, used and total space. The system SSD
+is visible but is **not** a download destination.
+
+**Critical: download locations use the actual existing Jellyfin libraries.**
+CrimsonFin selects a writable folder in the configured Movies or Shows
+libraries with the most unreserved free disk space, and asks qBittorrent to
+download **directly into that folder**. It sets `autoTMM=false` to keep
+qBittorrent from silently overriding that destination. It reserves space
+already needed by incomplete downloads and a further 2 GiB safety margin.
+
+Configure server-only paths in the private `.env`:
+
+```
+MEDIA_MOVIE_DIRS=/mnt/ADATA/Movies,/mnt/WD1TBLU/movies
+MEDIA_SERIES_DIRS=/mnt/ADATA/Shows,/mnt/ADATA/TV Shows,/mnt/WD1TBLU/shows
+```
+
+These were verified against Jellyfin's virtual folders on the original
+CrimsonFin server. Only actual writable directories under `/mnt` qualify.
+The system drive is never chosen automatically.
+
+FileList searches offer administrators a **Download as** selector for Movie
+or TV Show. Choose the correct kind before queuing. Existing downloads are
+**not moved**, only new ones use the new routing. Single-file TV episodes may
+need additional Jellyfin metadata recognition if the file is not in a series
+subfolder; Jellyfin library scanning is not guaranteed to run immediately.
+
+Only administrators can queue or see the qBittorrent status. Credentials
+stay private on the backend. The local downloader is not exposed via Funnel.
+Unit tests use simulated torrents and fake qBittorrent responses; a true
+live download test must be separately approved before modifying live data.

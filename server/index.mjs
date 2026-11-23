@@ -10,6 +10,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { validateFilelistRssUrl, parseFilelistRss } from './filelist-rss.mjs';
 import { createLanDiscovery } from './local-discovery.mjs';
 import { createFilelistService } from './filelist-service.mjs';
+import { createDownloadManager } from './download-manager.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_JSON = 16 * 1024;
@@ -165,7 +166,8 @@ export function createAppServer(options = {}) {
   const cache = new Map();
   const trackerQuota = new Map();
   const fetchImpl = options.fetchImpl || globalThis.fetch;
-  const filelist = createFilelistService({ env, db, crypto: crypt, fetchImpl });
+  const downloadManager = createDownloadManager({ env, fetchImpl });
+  const filelist = createFilelistService({ env, db, crypto: crypt, downloadManager, fetchImpl });
 
   async function jellyfin(relative, session, init = {}) {
     const headers = { accept: 'application/json', authorization: authHeader(session.deviceId, session.token), ...init.headers };
@@ -403,10 +405,15 @@ export function createAppServer(options = {}) {
           res.end(body);
           return;
         }
+        if (pathname === '/api/admin/downloads' && req.method === 'GET') {
+          requireAdmin(user);
+          return json(res, 200, await downloadManager.status());
+        }
         const queue = pathname.match(/^\/api\/admin\/filelist\/queue\/(\d+)$/);
         if (queue && req.method === 'POST') {
           verifyMutation(req); requireAdmin(user);
-          return json(res, 200, await filelist.queueTorrent(user.userId, queue[1]));
+          const body = await bodyJson(req);
+          return json(res, 200, await filelist.queueTorrent(user.userId, queue[1], body.kind));
         }
         if (pathname === '/api/admin/subtitles/status' && req.method === 'GET') {
           requireAdmin(user);

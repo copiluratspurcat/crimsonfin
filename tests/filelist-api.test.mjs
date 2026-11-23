@@ -7,7 +7,7 @@ import { buildFilelistApiUrl, parseFilelistApiResults, privateDownloadUrl } from
 test('FileList API uses an authenticated GET without a passkey in the URL', async () => {
   const db = new DatabaseSync(':memory:');
   db.exec('CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
-  let apiCalls = 0, torrentCalls = 0, qbCalls = 0;
+  let apiCalls = 0, torrentCalls = 0, queuedKind = '';
   const fetchImpl = async (url, init = {}) => {
     const u = new URL(url);
     if (u.pathname === '/api.php') {
@@ -24,16 +24,6 @@ test('FileList API uses an authenticated GET without a passkey in the URL', asyn
       torrentCalls++;
       return new Response(Buffer.from('d3:foo3:bare'), { status: 200, headers: { 'content-type': 'application/x-bittorrent' } });
     }
-    if (u.pathname === '/api/v2/auth/login') {
-      qbCalls++;
-      assert.ok(String(init.body).includes('username=crimsonfin'));
-      return new Response('Ok.', { headers: { 'set-cookie': 'SID=test-session; Path=/; HttpOnly' } });
-    }
-    if (u.pathname === '/api/v2/torrents/add') {
-      qbCalls++;
-      assert.equal(init.headers.cookie, 'SID=test-session');
-      return new Response('Ok.');
-    }
     throw new Error('Unexpected URL: ' + u.pathname);
   };
   const app = createFilelistService({
@@ -42,7 +32,13 @@ test('FileList API uses an authenticated GET without a passkey in the URL', asyn
       QBIT_URL: 'http://127.0.0.1:8877', QBIT_USERNAME: 'crimsonfin', QBIT_PASSWORD: 'sample-qbit-password'
     },
     db, crypto: { encrypt: value => 'enc:' + value, decrypt: value => value.slice(4) },
-    fetchImpl
+    fetchImpl,
+    downloadManager: { queueTorrentFile: async (torrent, kind, size) => {
+      assert.equal(torrent[0], 0x64);
+      queuedKind = kind;
+      assert.ok(size > 0);
+      return {ok:true,queued:true,kind,drive:'ADATA',folder:'/mnt/ADATA/Movies'};
+    } }
   });
   const settings = app.configure({ username: 'sample-user' });
   assert.equal(settings.apiConfigured, true);
@@ -61,7 +57,7 @@ test('FileList API uses an authenticated GET without a passkey in the URL', asyn
   await assert.rejects(() => app.torrentFor('different-user', '42'), /Search for this release again/);
   const queued = await app.queueTorrent('admin-user', '42');
   assert.equal(queued.queued, true);
-  assert.equal(qbCalls, 2);
+  assert.equal(queuedKind, 'movie');
   db.close();
 });
 

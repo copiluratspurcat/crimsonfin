@@ -110,6 +110,21 @@ test('request creation, owner visibility and admin review', async t => {
   assert.equal((await request('/api/requests', user, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://evil.test' }, body: JSON.stringify({ title: 'Bad request', kind: 'movie' }) })).status, 403);
 });
 
+test('download progress and disk information require administrator access', async t => {
+  const { request, login } = await fixture(t);
+  assert.equal((await request('/api/admin/downloads')).status, 401);
+  const friend = await login('friend');
+  assert.equal((await request('/api/admin/downloads', friend)).status, 403);
+  const admin = await login('admin');
+  const reply = await request('/api/admin/downloads', admin);
+  assert.equal(reply.status, 200);
+  const value = await reply.json();
+  assert.equal(typeof value.online, 'boolean');
+  assert.ok(Array.isArray(value.drives));
+  assert.ok(Array.isArray(value.downloads));
+  assert.doesNotMatch(JSON.stringify(value), /QBIT_PASSWORD|FILELIST_PASSKEY|SESSION_ENCRYPTION_KEY/);
+});
+
 test('Romanian subtitle coverage is visible to admins only', async t => {
   const { request, login } = await fixture(t);
   assert.equal((await request('/api/admin/subtitles/status')).status, 401);
