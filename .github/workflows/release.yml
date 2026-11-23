@@ -1,17 +1,16 @@
-name: Build Windows and Linux installers + publish update feeds
+name: Build and release CrimsonFin (private repository)
 
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   build:
-    name: Build ${{ matrix.os }}
+    name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -26,71 +25,62 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Verify release version and destination
+      - name: Verify version tag
         shell: bash
         run: |
-          node -e "const p=require('./package.json'); if(p.build.publish?.[0]?.owner !== 'copiluratspurcat' || p.build.publish?.[0]?.repo !== 'crimsonfin-downloads') process.exit(1)"
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            node -e "const p=require('./package.json'); if(process.env.GITHUB_REF_NAME!=='v'+p.version) { console.error('Tag must equal v'+p.version); process.exit(1) }"
-          fi
+          node -e "const p=require('./package.json'); const tag=process.env.GITHUB_REF_NAME; if(tag !== 'v'+p.version) {console.error('Expected v'+p.version+', got '+tag);process.exit(1)}"
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-      - name: Build renderer
+      - name: Build application
         run: npm run build
-      - name: Create Windows NSIS installer + latest.yml
+      - name: Package Windows EXE
         if: matrix.platform == 'windows'
         run: npx electron-builder --win nsis --x64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - name: Create Linux DEB and AppImage + latest-linux.yml
+      - name: Package Debian DEB
         if: matrix.platform == 'linux'
-        run: npx electron-builder --linux deb AppImage --x64 --publish never
-      - name: Check for update metadata
-        shell: bash
-        run: |
-          ls -lah release
-          if [[ "${{ matrix.platform }}" == "windows" ]]; then
-            test -f release/latest.yml
-          else
-            test -f release/latest-linux.yml
-          fi
-      - uses: actions/upload-artifact@v4
+        run: npx electron-builder --linux deb --x64 --publish never
+      - name: Upload installable package
+        uses: actions/upload-artifact@v4
         with:
           name: crimsonfin-${{ matrix.platform }}
           path: |
             release/*.exe
             release/*.deb
-            release/*.AppImage
-            release/*.yml
-            release/*.blockmap
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
   publish:
-    name: Publish GitHub Release
-    if: github.ref_type == 'tag'
+    name: Publish private GitHub Release
     needs: build
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
           pattern: crimsonfin-*
           path: artifacts
           merge-multiple: true
-      - name: Publish all Windows + Linux files together
+      - name: Confirm installers exist
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.DOWNLOADS_RELEASE_TOKEN }}
         run: |
-          set -euo pipefail
           ls -lah artifacts
-          : "${GH_TOKEN:?Set DOWNLOADS_RELEASE_TOKEN in the private repository's Actions secrets}"
-          TARGET_REPO="copiluratspurcat/crimsonfin-downloads"
-          if gh release view "$GITHUB_REF_NAME" --repo "$TARGET_REPO" >/dev/null 2>&1; then
-            echo "Release tag already exists in $TARGET_REPO; upload manually or use a new version."
-            exit 1
-          fi
-          gh release create "$GITHUB_REF_NAME" artifacts/* \
-            --repo "$TARGET_REPO" \
-            --title "CrimsonFin $GITHUB_REF_NAME" \
-            --notes "Windows and Linux installers plus automatic-update metadata."
+          find artifacts -maxdepth 1 -type f -name '*.exe' | grep -q .
+          find artifacts -maxdepth 1 -type f -name '*.deb' | grep -q .
+      - name: Publish installers on THIS repository
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: CrimsonFin ${{ github.ref_name }}
+          body: |
+            Windows installer (.exe) and Debian installer (.deb).
+            This repository is private; only authorized collaborators can access these downloads.
+            Updates must be installed manually. No token is included in the application.
+          files: |
+            artifacts/*.exe
+            artifacts/*.deb
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
