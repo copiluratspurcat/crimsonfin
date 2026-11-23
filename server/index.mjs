@@ -3,7 +3,7 @@ import https from 'node:https';
 import { readFileSync, existsSync, mkdirSync, createReadStream, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes, randomUUID, createHash, createCipheriv, createDecipheriv } from 'node:crypto';
+import { randomBytes, randomUUID, createHash, createCipheriv, createDecipheriv, timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { DatabaseSync } from 'node:sqlite';
@@ -16,6 +16,7 @@ import { initRequestJobs, createRequestFulfillment } from './request-fulfillment
 import { createSubtitleSync } from './subtitle-sync.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const BUILD_VERSION = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const MAX_JSON = 16 * 1024;
 const MEDIA_ID = /^[a-f\d-]{32,36}$/i;
 const SESSION_MS = 14 * 864e5;
@@ -271,7 +272,37 @@ export function createAppServer(options = {}) {
     const url = getPath(req.url || '/');
     const pathname = url.pathname;
     try {
-      if (req.method === 'GET' && pathname === '/api/health') return json(res, 200, { ok: true, service: 'CrimsonFin' });
+      if (req.method === 'GET' && pathname === '/api/health') return json(res, 200, { ok: true, service: 'CrimsonFin', version: BUILD_VERSION });
+      if (req.method === 'GET' && pathname === '/api/discord-monitor') {
+        const token = env.DISCORD_MONITOR_TOKEN || '';
+        if (token.length < 32) failure('Not found', 404);
+        const expected = Buffer.from('Bearer ' + token);
+        const supplied = Buffer.from(req.headers.authorization || '');
+        if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) failure('Unauthorized', 401);
+
+        const library = async () => {
+          if (!env.JELLYFIN_METADATA_API_KEY) return null;
+          const session = { deviceId: 'crimsonfin-discord-monitor', token: env.JELLYFIN_METADATA_API_KEY };
+          const params = new URLSearchParams({
+            Recursive: 'true', IncludeItemTypes: 'Movie,Series,Episode',
+            SortBy: 'DateCreated', SortOrder: 'Descending', Limit: '100',
+            Fields: 'DateCreated', EnableImages: 'false', EnableUserData: 'false'
+          });
+          const { Items } = await jellyfin('/Items?' + params, session);
+          if (!Array.isArray(Items)) return null;
+          return Items.filter(item => ['Movie', 'Series', 'Episode'].includes(item.Type) && item.Id && item.Name)
+            .map(({ Id, Name, Type, SeriesName, DateCreated }) => ({ Id, Name, Type, SeriesName, DateCreated }));
+        };
+        const [items, downloads] = await Promise.allSettled([library(), downloadManager.downloads()]);
+        return json(res, 200, {
+          items: items.status === 'fulfilled' ? items.value : null,
+          downloads: downloads.status === 'fulfilled'
+            ? downloads.value.filter(item => item.progress < 100)
+              .map(({ name, state, progress, downloadSpeedBytes, etaSeconds }) =>
+                ({ name, state, progress, downloadSpeedBytes, etaSeconds }))
+            : null
+        });
+      }
       if (req.method === 'POST' && pathname === '/api/auth/login') {
         verifyMutation(req);
         const ip = req.socket.remoteAddress || 'unknown';

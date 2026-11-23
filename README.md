@@ -352,3 +352,41 @@ movie and series directories. The player uses the selected audio track and
 keeps the original text subtitles visible while the server analyzes timing.
 Alignment is best-effort. Turn off **Auto-sync to dialogue** or use the manual
 offset under **Tracks & sync** if a track still needs adjustment.
+
+## Discord status and announcements
+
+Run `server/discord-monitor.mjs` on a separate always-on host with Node.js 22+
+and internet access. Hosting the monitor separately lets it report an outage
+when hoesmad loses power or network access. It updates one status message about
+once a minute when the displayed data changes. It announces availability
+changes after two failed checks, new Jellyfin movies, shows and episodes, and new
+stable desktop releases. The first successful library and release checks
+establish a baseline. The library check polls the 100 most recent entries.
+
+1. In Discord, create an incoming webhook for the status channel under
+   **Edit Channel → Integrations → Webhooks**. Optionally create a separate hook
+   for announcements. Use channels intended for your library members because
+   the bot shows media and download titles.
+2. On the CrimsonFin gateway, set `DISCORD_MONITOR_TOKEN` in `.env` to a unique
+   value from `openssl rand -hex 32`. Keep the existing Jellyfin metadata API
+   key as `JELLYFIN_METADATA_API_KEY` and the existing qBittorrent settings.
+   Restart the gateway once the updated gateway build is deployed.
+3. On the monitor host, clone this repo and create
+   `~/.config/crimsonfin-discord.env` with permissions `600`:
+
+   ```dotenv
+   CRIMSONFIN_MONITOR_URL=https://your-crimsonfin-gateway.example
+   DISCORD_MONITOR_TOKEN=the_same_generated_token
+   DISCORD_STATUS_WEBHOOK=https://discord.com/api/webhooks/...
+   DISCORD_ANNOUNCEMENTS_WEBHOOK=
+   DISCORD_MONITOR_STATE=./data/discord-monitor.json
+   ```
+
+   Keep the webhook and token values private. Leave the announcements field
+   empty to use the same channel. This worker needs no npm package install.
+4. From the clone, run
+   `node --env-file="$HOME/.config/crimsonfin-discord.env" server/discord-monitor.mjs`.
+   For persistent operation, use that command in the host's service manager with
+   the clone as its working directory and restart on failure. Retain the state
+   file across restarts to keep the existing status message and announcement
+   history. Run one worker per state file.
