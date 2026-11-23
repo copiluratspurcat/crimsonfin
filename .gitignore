@@ -1,12 +1,12 @@
 node_modules/
 dist/
-release/
-*.log
+releases/
+data/
 .env
+*.db
+*.db-*
+.DS_Store
 
-# Server-only secrets and runtime data
-server/.env
-server/*.sqlite*
-server/__pycache__/
-server/tests/__pycache__/
-server/.pytest_cache/
+desktop/config.json
+*.b64
+.env.*.local

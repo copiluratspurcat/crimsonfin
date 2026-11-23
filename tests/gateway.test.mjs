@@ -1,0 +1,102 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import { once } from 'node:events';
+import { createAppServer, rewriteM3u8 } from '../server/index.mjs';
+
+const VIDEO = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+function upstream() {
+  return http.createServer(async (req, res) => {
+    const p = new URL(req.url, 'http://localhost');
+    if (p.pathname === '/Users/AuthenticateByName') {
+      let body = ''; for await (const chunk of req) body += chunk;
+      const data = JSON.parse(body);
+      if (data.Pw !== 'testpass') { res.writeHead(401); res.end(); return; }
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ AccessToken: 'jellyfin-private-token-123', User: {
+        Id: VIDEO, Name: data.Username, Policy: { IsAdministrator: data.Username === 'admin' }
+      } })); return;
+    }
+    if (!req.headers.authorization?.includes('Token="jellyfin-private-token-123"')) { res.writeHead(401); res.end(); return; }
+    if (p.pathname.includes('master.m3u8')) { res.setHeader('content-type', 'application/vnd.apple.mpegurl'); res.end(`#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=450000\n/Videos/${VIDEO}/hls1/main/0.ts?ApiKey=jellyfin-private-token-123\n`); return; }
+    if (p.pathname.includes('/hls1/main/0.ts') || p.pathname.includes('/stream')) {
+      res.setHeader('accept-ranges', 'bytes');
+      if (req.headers.range === 'bytes=0-3') {
+        res.writeHead(206, { 'content-type': 'video/mp2t', 'content-range': 'bytes 0-3/12', 'content-length': '4' });
+        res.end('abcd'); return;
+      }
+      res.writeHead(200, { 'content-type': 'video/mp2t' }); res.end('abcdefghijkl'); return;
+    }
+    if (p.pathname === '/System/Info/Public') { res.setHeader('content-type', 'application/json'); res.end('{"ServerName":"Fake"}'); return; }
+    if (p.pathname.startsWith('/Sessions/Playing') || p.pathname.includes('FavoriteItems')) { res.writeHead(204); res.end(); return; }
+    res.setHeader('content-type', 'application/json');
+    if (p.pathname.endsWith('/Items') || p.pathname.includes('/Items/')) { res.end(JSON.stringify({ Items: [{ Id: VIDEO, Name: 'Test Movie', Type: 'Movie' }], TotalRecordCount: 1 })); return; }
+    res.end('{"Items":[],"TotalRecordCount":0}');
+  });
+}
+async function begin(server) { server.listen(0, '127.0.0.1'); await once(server, 'listening'); return `http://127.0.0.1:${server.address().port}`; }
+function end(server) { return new Promise(resolve => server.close(resolve)); }
+
+async function fixture(t) {
+  const jf = upstream(); const jellyfinUrl = await begin(jf);
+  const gateway = createAppServer({ dbPath: ':memory:', env: { JELLYFIN_URL: jellyfinUrl, NODE_ENV: 'development', SESSION_ENCRYPTION_KEY: Buffer.alloc(32, 5).toString('base64') } });
+  const url = await begin(gateway.server);
+  t.after(async () => { await end(gateway.server); await end(jf); gateway.db.close(); });
+  async function login(name = 'friend') {
+    const r = await fetch(url + '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: name, password: 'testpass', remember: true }) });
+    assert.equal(r.status, 200); return r.headers.get('set-cookie').split(';')[0];
+  }
+  const request = (path, cookie, init = {}) => fetch(url + path, { ...init, headers: { ...(cookie ? { cookie } : {}), ...init.headers } });
+  return { url, request, login, gateway };
+}
+
+test('login uses per-user token, encrypted storage, cookies, and authorization boundaries', async t => {
+  const { request, login, gateway } = await fixture(t);
+  const noAuth = await request('/api/library'); assert.equal(noAuth.status, 401);
+  const cookie = await login();
+  const me = await (await request('/api/auth/me', cookie)).json();
+  assert.equal(me.user.isAdmin, false);
+  const library = await request('/api/library?type=movie', cookie);
+  assert.equal(library.status, 200);
+  assert.equal((await library.json()).Items[0].Name, 'Test Movie');
+  const record = gateway.db.prepare('SELECT token_enc FROM sessions LIMIT 1').get();
+  assert.doesNotMatch(record.token_enc, /jellyfin-private-token-123/);
+  assert.equal((await request('/api/admin/status', cookie)).status, 403);
+  assert.equal((await request('/api/playback', cookie, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event: 'Playing', itemId: VIDEO, positionTicks: 0 }) })).status, 200);
+  assert.equal((await request(`/api/items/${VIDEO}/favorite`, cookie, { method: 'POST' })).status, 200);
+});
+
+test('proxy supports video range requests without leaking Jellyfin token', async t => {
+  const { request, login } = await fixture(t);
+  const cookie = await login();
+  const partial = await request(`/jellyfin/Videos/${VIDEO}/stream`, cookie, { headers: { range: 'bytes=0-3' } });
+  assert.equal(partial.status, 206);
+  assert.equal(partial.headers.get('content-range'), 'bytes 0-3/12');
+  assert.equal(await partial.text(), 'abcd');
+  const playlist = await request(`/jellyfin/Videos/${VIDEO}/master.m3u8`, cookie);
+  assert.equal(playlist.status, 200);
+  const text = await playlist.text();
+  assert.match(text, new RegExp(`/jellyfin/Videos/${VIDEO}/hls1/main/0\\.ts`));
+  assert.doesNotMatch(text, /jellyfin-private-token-123/);
+  const denied = await request(`/jellyfin/System/Info/Public`, cookie);
+  assert.equal(denied.status, 403);
+});
+
+test('request creation, owner visibility and admin review', async t => {
+  const { request, login } = await fixture(t);
+  const user = await login(); const admin = await login('admin');
+  const posted = await request('/api/requests', user, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'Big Movie', kind: 'movie', year: 2026, notes: 'test' }) });
+  assert.equal(posted.status, 201);
+  const { id } = await posted.json();
+  assert.equal((await request(`/api/requests/${id}`, user, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'approved' }) })).status, 403);
+  const changed = await request(`/api/requests/${id}`, admin, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'approved' }) });
+  assert.equal(changed.status, 200);
+  const listed = await (await request('/api/requests', user)).json();
+  assert.equal(listed.requests[0].status, 'approved');
+  assert.equal((await request('/api/requests', user, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://evil.test' }, body: JSON.stringify({ title: 'Bad request', kind: 'movie' }) })).status, 403);
+});
+
+test('playlist URL allowlist blocks external URLs', () => {
+  assert.throws(() => rewriteM3u8('#EXTM3U\nhttps://example.com/evil.ts', 'http://localhost/Videos/' + VIDEO + '/master.m3u8', 'http://localhost'));
+});

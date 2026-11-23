@@ -1,88 +1,107 @@
-name: Build and release CrimsonFin (private repository)
+name: Build and release CrimsonFin desktop
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  build:
-    name: Build ${{ matrix.platform }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            platform: windows
-          - os: ubuntu-24.04
-            platform: linux
+  validate:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-      - name: Verify version tag
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux
+          - runner: windows-latest
+            platform: windows
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Configure desktop HTTPS endpoint
         shell: bash
         run: |
-          node -e "const p=require('./package.json'); const tag=process.env.GITHUB_REF_NAME; if(tag !== 'v'+p.version) {console.error('Expected v'+p.version+', got '+tag);process.exit(1)}"
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
-      - name: Test metadata behavior
-        run: npm test
-      - name: Build application
-        run: npm run build
-      - name: Package Windows EXE
+          node scripts/configure-client.mjs "$(node -p "require('./desktop/release-target.json').url")"
+      - name: Package Linux .deb and .AppImage
+        if: matrix.platform == 'linux'
+        run: npx electron-builder --linux deb AppImage --x64 --publish never
+      - name: Package Windows .exe installer
         if: matrix.platform == 'windows'
         run: npx electron-builder --win nsis --x64 --publish never
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - name: Package Debian DEB
-        if: matrix.platform == 'linux'
-        run: npx electron-builder --linux deb --x64 --publish never
-      - name: Upload installable package
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: crimsonfin-${{ matrix.platform }}
           path: |
-            release/*.exe
-            release/*.deb
+            releases/*.exe
+            releases/*.deb
+            releases/*.AppImage
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
 
-  publish:
-    name: Publish private GitHub Release
+  release:
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
           pattern: crimsonfin-*
-          path: artifacts
+          path: release-assets
           merge-multiple: true
-      - name: Confirm installers exist
+      - name: Verify required installers exist
         shell: bash
         run: |
-          ls -lah artifacts
-          find artifacts -maxdepth 1 -type f -name '*.exe' | grep -q .
-          find artifacts -maxdepth 1 -type f -name '*.deb' | grep -q .
-      - name: Publish installers on THIS repository
-        uses: softprops/action-gh-release@v2
+          find release-assets -maxdepth 1 -name '*.exe' | grep -q .
+          find release-assets -maxdepth 1 -name '*.deb' | grep -q .
+      - name: Determine release channel
+        id: meta
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "preview=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=preview-$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+            echo "preview=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: CrimsonFin ${{ github.ref_name }}
-          body: |
-            Windows installer (.exe) and Debian installer (.deb).
-            This repository is private; only authorized collaborators can access these downloads.
-            Updates must be installed manually. No token is included in the application.
-          files: |
-            artifacts/*.exe
-            artifacts/*.deb
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: CrimsonFin ${{ steps.meta.outputs.tag }}
+          prerelease: ${{ steps.meta.outputs.preview }}
+          generate_release_notes: true
           fail_on_unmatched_files: true
+          files: |
+            release-assets/*.exe
+            release-assets/*.deb
+            release-assets/*.AppImage
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

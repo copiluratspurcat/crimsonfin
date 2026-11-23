@@ -1,46 +1,169 @@
-# CrimsonFin FileList searchable API backend add-on
+# CrimsonFin — Jellyfin client with public HTTPS gateway
 
-This upgrades **only the Requests companion** from the v1.2.5 desktop project. It does not replace your desktop app, libraries, nginx, Funnel, Tailscale or qBittorrent.
+A custom cinematic React client with a secure Node gateway for Jellyfin, HLS media proxying, FileList metadata search, media requests, and Electron packaging for Windows/Linux. This is an **integration-ready MVP**, not a production-certified release: the mock-server tests pass, but real playback (especially transcoding, subtitles, and codec support), FileList account behavior, and packaged installers still require integration testing on your machine.
 
-Changes:
-- FileList `search-torrents` API used to find specific titles beyond the 100 most recent RSS entries.
-- Requires the FileList **username** (not the Jellyfin username). Uses `FILELIST_API_PASSKEY` if set; otherwise securely reads the passkey from the existing server-side `RSS_FEED_URL`.
-- RSS remains a fallback. No tracker credentials are returned to clients.
-- 30-minute per-title cache; at most 100 API searches per hour per Requests process (under FileList's documented 150/hour cap).
-- Existing administrator review and download selection unchanged; no automatic approvals enabled by this update.
+## What works in the code
 
-## Desktop -> server installation
+- Existing **per-user Jellyfin login**, with an HttpOnly session cookie and an encrypted Jellyfin token held **only on the gateway**. Accounts remain separate. Basic administrator authorization comes from Jellyfin's login response.
+- Library browsing, item details, seasons and episodes, Jellyfin search, recently added, resume items, next episodes, favorites, and playback progress reporting.
+- Video with **hls.js** (Jellyfin HLS/transcoding) or opt-in direct playback. Native video controls support seeking, volume and fullscreen; HLS subtitle/audio track support varies by browser/server. This is **not** an mpv-based client.
+- Protected media proxy preserving HTTP 206, Range headers, backpressure and cancellation; HLS playlists rewritten to same-origin proxied paths; redirects to internal/private servers are blocked.
+- Media requests stored in SQLite with status updates, per-user visibility, admin moderation, and an optional server-side FileList **metadata search**. **No automatic downloads** and no torrent passkeys in web responses.
+- Responsive dark UI with deterministic CSS motion timings and reduced-motion support.
+- Browser deployment and an Electron desktop shell showing the **custom CrimsonFin frontend** at the configured public hostname (not the stock Jellyfin web client). It does not yet integrate a native mpv player or offline mode.
 
-1. Extract the zip on the *desktop*, and send the file:
+## Server requirements
 
-    scp ~/Downloads/CrimsonFin-FileList-API-Upgrade/requests_service.py jigglebiggle@192.168.1.105:~/requests_service-filelist-api.py
+- Linux with Node.js **22.16+** (Node's built-in `node:sqlite`; experimental in Node 22), npm, and your existing Jellyfin server.
+- Tailscale installed and logged in on the **server only**. Funnel capability enabled in your tailnet, MagicDNS and HTTPS certificates activated.
+- Actual server address and a strong encryption key. A real Jellyfin server and FileList credentials were **not** included in this archive.
 
-2. On the **server**:
+## 1. Install and configure on Linux
 
-    sudo cp -a /opt/crimsonfin-requests/requests_service.py /opt/crimsonfin-requests/requests_service.py.pre-filelist-api
-    sudo install -m 644 ~/requests_service-filelist-api.py /opt/crimsonfin-requests/requests_service.py
-    sudo python3 -m py_compile /opt/crimsonfin-requests/requests_service.py
-    sudo nano /etc/crimsonfin-requests.env
+```bash
+unzip CrimsonFin-Client.zip
+cd CrimsonFin-Client
+npm install
+cp .env.example .env
+openssl rand -base64 32
+```
 
-   Add a line at the bottom: `FILELIST_API_USERNAME=your_actual_filelist_username`.
-   Existing `RSS_FEED_URL` must have a working `passkey=` field. Alternatively add `FILELIST_API_PASSKEY=<your-new-passkey>`.
-   The username is your FileList login, not your Jellyfin login; keep passkeys private.
+Edit `.env`: set `JELLYFIN_URL` to the Jellyfin URL **as reachable from the same Linux server** (normally `http://127.0.0.1:8096`), `SESSION_ENCRYPTION_KEY` to the generated base64 key, `PUBLIC_ORIGIN` to your **real** `https://device.tailnet.ts.net:8443` host, and optionally `FILELIST_RSS_URL` (recent feed search) or `FILELIST_USERNAME`/`FILELIST_PASSKEY` (full API search). Keep `.env` private (`chmod 600 .env`). Do not change the session key without knowing that it invalidates existing sessions. The FileList passkey is not your website password.
 
-3. Restart and test:
+```bash
+npm test
+npm run build
+npm start
+```
 
-    sudo systemctl restart crimsonfin-requests
-    sudo systemctl status crimsonfin-requests --no-pager
-    curl -fsS http://127.0.0.1:8097/requests/health
+Check `curl http://127.0.0.1:8099/api/health`, then open `http://127.0.0.1:8099` **locally** to test. In dev, set `NODE_ENV=development` so cookies work over local HTTP; for actual public Funnel exposure use `NODE_ENV=production`, so session cookies are secure.
 
-4. In CrimsonFin -> Media Requests, use Choose RSS release for a previously unmatched title. Despite its old label the endpoint now checks the searchable API and recent RSS. Refresh the request and if necessary use Retry.
+To keep the gateway running after reboot:
 
-Rollback:
+```bash
+bash scripts/install-user-service.sh
+sudo loginctl enable-linger "$USER"
+systemctl --user status crimsonfin
+```
 
-    sudo cp -a /opt/crimsonfin-requests/requests_service.py.pre-filelist-api /opt/crimsonfin-requests/requests_service.py
-    sudo systemctl restart crimsonfin-requests
+## 2. Expose to friends with Tailscale Funnel
 
-## Cautions
+On the Linux server (you need Tailscale signed in, and tailnet Funnel capability enabled):
 
-FileList's API response shape and live permissions were not tested with your actual account. A mocked API response and 9 existing service tests passed. A real query should be verified before relying on it.
+```bash
+tailscale funnel --bg --yes --https=8443 127.0.0.1:8099
+# Or: bash scripts/funnel.sh on
+tailscale funnel status
+curl -i https://YOUR-REAL-DEVICE.YOUR-TAILNET.ts.net/api/health
+```
 
-The API user and RSS passkey are stored only server-side. Because the passkey and other credentials have appeared in screenshots/chat, regenerate them before allowing users to access the system.
+Use your real hostname, never the example one. The `--bg` mode keeps Funnel's configuration active through Tailscale restarts and machine reboots. Configure the gateway's `PUBLIC_ORIGIN` to exactly this public HTTPS origin. Confirm access from mobile data or another external network, and log in as a **non-admin Jellyfin user**.
+
+Diagnostics:
+
+```bash
+sudo tailscale status
+sudo tailscale funnel status
+sudo tailscale netcheck
+systemctl --user status crimsonfin --no-pager
+journalctl --user -u crimsonfin -n 80 --no-pager
+curl -i http://127.0.0.1:8099/api/health
+curl -i https://YOUR-REAL-HOST.ts.net/api/health
+```
+
+To turn off public access: `bash scripts/funnel.sh off` or `tailscale funnel --https=8443 off`. Tailscale docs may change again, so compare with `tailscale funnel --help` on your installed release.
+
+### Funnel throughput warning
+
+Funnel routes internet traffic through Tailscale relay infrastructure and has **nonconfigurable bandwidth limits**. It may be inadequate for simultaneous 4K streams or multiple remote users. If playback buffers, test your actual uplink and the Funnel path; use Jellyfin transcoding with a lower bitrate or move to a public HTTPS reverse proxy with capacity appropriate to your workload. Nothing in the React interface can lift Funnel limits.
+
+### Alternate public HTTPS reverse proxy
+
+CrimsonFin uses relative `/api` and `/jellyfin` paths. You can put Caddy, Nginx, or another trustworthy HTTPS reverse proxy in front of **the same loopback gateway on port 8099**. Set `PUBLIC_ORIGIN=https://your-domain.example`, keep `BIND_HOST=127.0.0.1`, configure TLS at the proxy, and proxy full media streams without buffering. Protect the gateway behind host firewalls; don't route the stock Jellyfin server directly through this application's login system.
+
+## 3. Build the Windows / Linux desktop app
+
+The desktop client runs the custom Chromium-compatible interface from your CrimsonFin gateway. It requires **no Tailscale installed by friends**. Before packaging, hard-code your public HTTPS endpoint in its configuration:
+
+```bash
+node scripts/configure-client.mjs https://YOUR-REAL-HOST.ts.net
+npm run desktop:dist
+```
+
+- Windows NSIS packaging must be performed on Windows for the most reliable result: `npm run build && npx electron-builder --win nsis`.
+- Linux AppImage and Debian package: `npm run build && npx electron-builder --linux AppImage deb`.
+- Installer output appears in `releases/`.
+- `npm run desktop:dev` launches the desktop client; set `CRIMSONFIN_URL=https://YOUR-REAL-HOST.ts.net` to override the configured URL during development.
+
+**Important:** this Electron app is a desktop host for the independently developed CrimsonFin UI, not a native media decoder. In a later iteration, integrate an mpv-based native player for formats Chromium cannot decode efficiently. Its local source is separate from your Jellyfin server and it is **not** the Jellyfin site's built-in UI.
+
+## 4. Media requests / FileList
+
+All logged-in Jellyfin users can create requests, list their own requests, and optionally search FileList metadata. Admins can see all requests and set `pending`, `approved`, `rejected`, or `fulfilled`. FileList search uses the private RSS feed for recent items, or the API when configured with a username and API passkey, with a five-minute query cache and per-user rate limiting. The app **does not fetch torrents or install content automatically**. Use only content you have the rights to obtain and distribute.
+
+## Test status and limitations
+
+`npm test` uses Node's built-in test runner and a fake Jellyfin server; it exercises login, session isolation, request moderation, 206 Range responses and HLS URL rewriting. Tests do **not** establish compatibility with your real Jellyfin version, devices, codecs, subtitles, or remote throughput. The frontend still needs `npm install` and `npm run build` on a machine with npm registry access. This environment had no npm network access, so it could not build Electron installers or run browser integration tests.
+
+For public deployment, additionally consider: TLS/domain access audit, account throttling behind Tailscale's proxy (all clients may share one loopback IP), more rigorous CSRF protection, observability, rate limiting per account, FileList quota monitoring, subtitle and media-stream selection, and a Jellyfin PlaybackInfo/device-profile negotiation layer. Before calling this production-ready, test at least two simultaneous remote playback sessions and all critical actions with non-admin users.
+
+### Project structure
+
+```text
+server/index.mjs         Node gateway, auth, SQLite, media proxy, FileList
+web/src/main.tsx         React interface, player, requests, admin UI
+web/src/styles.css       Theme, transitions, responsive styling
+web/index.html           Application entry
+vite.config.ts           React builder, local API proxy
+ desktop/main.cjs        Electron desktop shell with locked navigation
+ scripts/funnel.sh       Public Funnel enable/status/disable
+ scripts/configure-client.mjs   Bake server URL into desktop release
+ scripts/install-user-service.sh  Boot-time systemd user service
+ tests/gateway.test.mjs  Gateway tests without real Jellyfin credentials
+```
+
+## Sources
+
+- Tailscale Funnel CLI: https://tailscale.com/docs/reference/tailscale-cli/funnel
+- Tailscale Funnel limitations: https://tailscale.com/docs/features/tailscale-funnel
+- Jellyfin 12 release changes: https://jellyfin.org/posts/jellyfin-release-12.0/
+- Jellyfin TypeScript SDK: https://typescript-sdk.jellyfin.org/
+- Community-documented FileList API: https://github.com/ByteBendr/FileListWindowsClient
+
+## 6. Automatic desktop releases
+
+See [RELEASING.md](RELEASING.md) for GitHub Actions preview/stable releases and configuration of the remote HTTPS endpoint. The build creates Linux `.deb`, Linux AppImage and Windows `.exe` installers.
+
+## Deployment state and release automation (v2.0.0)
+
+The server gateway runs separately from Jellyfin, bound to the local loopback interface on port 8099. Tailscale Funnel exposes it on **HTTPS port 8443**, leaving any existing HTTPS port 443 configuration untouched. The browser app displays **Local** or **Remote** rather than showing an internal IP address. That label is cosmetic; the public hostname is still present in network traffic and packaged desktop apps so they can connect.
+
+### Windows and Linux automatic installers
+
+The GitHub Actions workflow at `.github/workflows/release.yml` runs on pushes to the `main` branch, release tags matching `v*`, or manual workflow dispatches. It runs tests, compiles the web client on Node.js 24, packages a Windows NSIS `.exe` and Linux `.deb` and `.AppImage`, and uploads them to a GitHub release.
+
+- A push to `main` creates a numbered **prerelease** (`preview-N`).
+- A pushed tag like `v2.0.0` creates a **stable release**.
+- The workflow uses its built-in `GITHUB_TOKEN`, requiring repository Actions **read/write contents** permission. Personal GitHub tokens are **not** stored in workflows.
+- `desktop/release-target.json` contains **only** the public Tailscale HTTPS hostname, which desktop clients need. It is not a private LAN/Tailscale IP, passkey, or password.
+- To change the server endpoint in subsequent installers, update `desktop/release-target.json`, commit, and push.
+- Windows releases are not digitally code-signed; Windows SmartScreen warnings may appear.
+
+### FileList RSS catalog
+
+Set `FILELIST_RSS_URL` in the **server's private `.env` only**, pointing to the FileList RSS feed. The protected `/api/filelist/search` endpoint searches recent RSS item titles; the frontend receives sanitized titles but never feed URLs, tracker passkeys, or download links. This is an RSS-recent-entry search, **not** a full catalog index or automatic torrent download. Optional FileList API credentials can still enable the pre-existing API search.
+
+### Verification
+
+```bash
+npm ci
+npm test
+npm run build
+npm run pack:linux
+systemctl --user status crimsonfin
+tailscale funnel status
+```
+
+Use a non-admin Jellyfin account to verify login, library visibility, search, playback and requests. The automated tests use a simulated Jellyfin upstream and do not guarantee every live video codec, remote playback or torrent-tracker operation works.
+
+**Security:** never commit `.env`, `desktop/config.json`, GitHub tokens or FileList passkeys. After secrets appear in a chat, rotate them before continuing long-term use.
