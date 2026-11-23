@@ -1,3 +1,8 @@
 {
-  "url": "https://hoesmad.tail0adc10.ts.net:8443"
+  "url": "https://hoesmad.tail0adc10.ts.net:8443",
+  "local": {
+    "host": "hoesmad.local",
+    "port": 9443,
+    "fingerprint256": "AE:06:17:42:16:14:4C:F1:64:5B:13:29:FB:26:4F:9D:AC:D3:D9:4E:57:DB:7E:23:46:13:66:A0:BE:FF:49:D8"
+  }
 }

@@ -10,3 +10,5 @@ data/
 desktop/config.json
 *.b64
 .env.*.local
+
+tls/

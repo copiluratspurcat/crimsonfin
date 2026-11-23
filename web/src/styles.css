@@ -205,3 +205,19 @@ input[type='checkbox'] { accent-color:#f05974; width:15px; height:15px; }
 @media(max-width:1050px){ .app { --aside:82px; } .app.rail { --aside:82px; } .sidebar .brand>div:not(.logo-mark),.sidebar .nav-link span,.sidebar .nav-label,.sidebar-name,.sidebar-bottom>.icon-button {display:none;} .sidebar .nav-link{justify-content:center;padding:13px;} .sidebar .brand{margin-left:7px;} .topbar{padding:0 28px;} .hero{padding-left:35px;} .shelves{padding:0 28px 50px;} .content-section{padding:40px 30px;} }
 @media(max-width:740px){ .app,.app.rail{ --aside:0px;} .sidebar{height:68px;width:100%;inset:auto 0 0 0; flex-direction:row;justify-content:center;padding:8px;border-right:0;border-top:1px solid #283244;} .sidebar .brand,.sidebar .collapse,.sidebar .nav-label,.sidebar-bottom{display:none;} .sidebar nav{flex-direction:row;overflow-x:auto;align-items:center;width:100%;justify-content:space-around;} .sidebar .nav-link{width:auto;padding:11px;} .sidebar .nav-link i{display:none;} .main{padding-bottom:70px;margin-left:0;} .topbar{height:60px;padding:0 18px;} .top-right{gap:12px;} .online{display:none;} .hero{min-height:440px;padding:25px 24px;background-position:center;} .hero h1{font-size:38px;} .shelves{padding:0 14px 20px;} .poster{width:132px;flex-basis:132px;} .poster-cover{height:197px;} .content-section{padding:30px 18px 50px;} .poster-grid{grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:18px 12px;} .request-columns,.admin-stats{grid-template-columns:1fr;} .footer{display:none;} .details-body{padding:0 24px 30px;} .details-body h1{font-size:30px;} .details-panel{height:94vh;} .modal-overlay{padding:10px;} .player-bottom{flex-direction:column;align-items:start;} .setting-card{flex-direction:column;align-items:flex-start;} }
 @media(prefers-reduced-motion:reduce){ *,*::before,*::after{animation-duration:0.01ms!important;transition-duration:0.01ms!important;scroll-behavior:auto!important;} }
+
+.episode-art { position:relative; display:inline-flex; flex:0 0 110px; width:110px; height:66px; align-items:center; justify-content:center; border-radius:7px; overflow:hidden; background:linear-gradient(125deg,#273145,#151d2d); }
+.episode-art img { position:absolute; inset:0; z-index:1; object-fit:cover; width:100%; height:100%; }
+.episode-art-placeholder { color:#62748e; position:relative; z-index:0; }
+
+.tracker-result { display:flex; flex-wrap:wrap; align-items:center; gap:10px; border-bottom:1px solid #30394a; }
+.tracker-result > button { flex:1; min-width:160px; border-bottom:0; }
+.torrent-download { color:#ffd2d8; background:#472131; border:1px solid #7e3349; padding:8px 10px; border-radius:8px; text-decoration:none; white-space:nowrap; font-size:11px; }
+.torrent-download:hover { background:#6b3145; }
+.filelist-settings { margin-top:24px; }
+.filelist-settings form { display:grid; gap:11px; max-width:500px; }
+.filelist-settings form .btn { justify-self:start; }
+
+.torrent-actions { display:inline-flex; align-items:center; gap:7px; }
+.tracker-result .queue-download { width:auto; padding:8px 9px; border:1px solid #6f8cc7; border-radius:8px; color:#d5e5ff; background:#1a3557; white-space:nowrap; font-size:11px; }
+.tracker-result .queue-download:hover { background:#26466c; }

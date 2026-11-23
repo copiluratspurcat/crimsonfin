@@ -17,16 +17,16 @@ The workflow in `.github/workflows/release.yml`:
 - Uses the built-in GitHub Actions `GITHUB_TOKEN` with `contents: write`;
   do not store a personal access token in GitHub Actions or commit one.
 
-The public HTTPS endpoint is configured in `desktop/release-target.json`
-(including port 8443). It is the public Tailscale DNS hostname, **not** a
-private IP, password, or FileList passkey. The workflow reads that file and
-generates `desktop/config.json` at build time. The generated file is Git-ignored.
+Before releasing, set **Settings → Secrets and variables → Actions → Variables**
+in your repository:
 
-The endpoint hostname is visible in repository source and distributed binaries,
-because the application needs it to connect; this does not expose the LAN or
-Tailscale IP. The app interface shows **Local** or **Remote** instead of any
-network address. To switch to another server, update that JSON file and push a
-new release. No GitHub Actions repository variable is required.
+`CRIMSONFIN_PUBLIC_URL` = your working public HTTPS Funnel origin, including
+port 8443. The workflow generates `desktop/config.json` at build time.
+The file is deliberately ignored by Git to avoid publishing the hostname in
+source control. End users see **Local**/**Remote**, not IP addresses.
+
+The public hostname must still be embedded in the installer to connect to
+your server and is inherently discoverable by inspecting network traffic.
 
 ## Server
 

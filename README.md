@@ -167,3 +167,11 @@ tailscale funnel status
 Use a non-admin Jellyfin account to verify login, library visibility, search, playback and requests. The automated tests use a simulated Jellyfin upstream and do not guarantee every live video codec, remote playback or torrent-tracker operation works.
 
 **Security:** never commit `.env`, `desktop/config.json`, GitHub tokens or FileList passkeys. After secrets appear in a chat, rotate them before continuing long-term use.
+
+## LAN-first, metadata and FileList API (v2.1)
+
+The desktop client checks for a certificate-pinned HTTPS gateway on the local network first, then uses the public Tailscale Funnel URL if the LAN gateway is unreachable. Browsers that directly open the public Funnel URL still use the public route. LAN discovery uses UDP port 8098 and HTTPS port 9443. The public address is shown as Local or Remote in CrimsonFin rather than revealing IPs in the UI.
+
+The server can run `scripts/repair-episode-metadata.mjs` via an optional systemd user timer. It only replaces uncertain/generic episode titles when it finds a positively matched title in TVMaze, and saves a local backup of every changed Jellyfin record. Some official catalogs also use titles such as Episode 1, so a missing title cannot always be resolved.
+
+The full FileList API uses the **FileList-specific username** and the private feed/API passkey. Administrators can configure this in CrimsonFin → Admin → FileList. RSS-only search remains available if no username is configured. The API uses HTTP Basic credentials over HTTPS and never sends the passkey in URL parameters or to the web browser. Admin-only torrent fetching and queuing to the loopback-only qBittorrent instance requires `QBIT_URL`, `QBIT_USERNAME`, `QBIT_PASSWORD`, and optionally `QBIT_SAVE_PATH` in the **private server .env**. Media request users are not allowed to trigger torrent downloads.

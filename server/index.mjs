@@ -1,4 +1,5 @@
 import http from 'node:http';
+import https from 'node:https';
 import { readFileSync, existsSync, mkdirSync, createReadStream, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +8,8 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { validateFilelistRssUrl, parseFilelistRss } from './filelist-rss.mjs';
+import { createLanDiscovery } from './local-discovery.mjs';
+import { createFilelistService } from './filelist-service.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_JSON = 16 * 1024;
@@ -53,6 +56,20 @@ function makeCookie(id, secure, remember) {
   return `cf_session=${encodeURIComponent(id)}; Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}${remember ? `; Max-Age=${REMEMBER_MS / 1000}` : ''}`;
 }
 function deleteCookie(secure) { return `cf_session=; Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}; Max-Age=0`; }
+export function allowedLocalHttpsOrigin(req, origin, port = 9443) {
+  if (!req.socket?.encrypted || !origin || !req.headers.host) return false;
+  try {
+    const incoming = new URL(origin);
+    const expected = new URL('https://' + req.headers.host);
+    if (incoming.origin !== expected.origin || incoming.port !== String(port)) return false;
+    const hostname = incoming.hostname.toLowerCase();
+    const isPrivate = /^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(hostname)
+      || hostname.endsWith('.local');
+    const peer = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+    const privatePeer = /^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|127\.)/.test(peer);
+    return isPrivate && privatePeer;
+  } catch { return false; }
+}
 function parseCookie(header, name) {
   return String(header || '').split(';').map(v => v.trim()).find(s => s.startsWith(`${name}=`))?.slice(name.length + 1) || '';
 }
@@ -69,6 +86,7 @@ function initDb(db) {
       status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS request_user_date ON requests (user_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `);
 }
 function makeCrypto(key) {
@@ -132,6 +150,7 @@ export function createAppServer(options = {}) {
   const secure = env.NODE_ENV === 'production';
   if (secure && !env.PUBLIC_ORIGIN) throw new Error('Set PUBLIC_ORIGIN before running in production');
   const publicOrigin = env.PUBLIC_ORIGIN ? new URL(env.PUBLIC_ORIGIN).origin : '';
+  const localOrigin = env.LOCAL_ORIGIN ? new URL(env.LOCAL_ORIGIN).origin : '';
   const secret = env.SESSION_ENCRYPTION_KEY ? Buffer.from(env.SESSION_ENCRYPTION_KEY, 'base64') : randomBytes(32);
   if (secret.length !== 32) throw new Error('SESSION_ENCRYPTION_KEY must decode to exactly 32 bytes');
   if (secure && !env.SESSION_ENCRYPTION_KEY) throw new Error('Set SESSION_ENCRYPTION_KEY in production');
@@ -145,6 +164,7 @@ export function createAppServer(options = {}) {
   const cache = new Map();
   const trackerQuota = new Map();
   const fetchImpl = options.fetchImpl || globalThis.fetch;
+  const filelist = createFilelistService({ env, db, crypto: crypt, fetchImpl });
 
   async function jellyfin(relative, session, init = {}) {
     const headers = { accept: 'application/json', authorization: authHeader(session.deviceId, session.token), ...init.headers };
@@ -172,7 +192,7 @@ export function createAppServer(options = {}) {
     if (origin) {
       const current = secure ? publicOrigin : new URL(`http://${req.headers.host || '127.0.0.1:8099'}`).origin;
       const devOrigins = ['http://127.0.0.1:5173', 'http://localhost:5173'];
-      if (origin !== current && !( !secure && devOrigins.includes(origin))) failure('Origin not allowed', 403);
+      if (origin !== current && origin !== localOrigin && !allowedLocalHttpsOrigin(req, origin, Number(env.LOCAL_TLS_PORT || 9443)) && !( !secure && devOrigins.includes(origin))) failure('Origin not allowed', 403);
     }
     if (String(req.headers['sec-fetch-site'] || '').toLowerCase() === 'cross-site') failure('Cross-site requests are denied', 403);
   }
@@ -217,53 +237,6 @@ export function createAppServer(options = {}) {
     try { await pipeline(Readable.fromWeb(upstream.body), res, { signal: controller.signal }); }
     catch (err) { if (!controller.signal.aborted) console.error('[media proxy] stream failed:', err?.message); }
     finally { completed = true; }
-  }
-  async function filelistSearch(query, userId) {
-    const hasApi = Boolean(env.FILELIST_USERNAME && env.FILELIST_PASSKEY);
-    if (!hasApi && !env.FILELIST_RSS_URL) return { configured: false, results: [] };
-    const key = query.toLowerCase();
-    const cached = cache.get(key);
-    if (cached && cached.until > Date.now()) return cached.value;
-    const quota = (trackerQuota.get(userId) || []).filter(t => t + 3600000 > Date.now());
-    const globalQuota = (trackerQuota.get('__global__') || []).filter(t => t + 3600000 > Date.now());
-    if (quota.length >= 30 || globalQuota.length >= 120) failure('FileList search limit reached. Try again later.', 429);
-    trackerQuota.set(userId, [...quota, Date.now()]);
-    trackerQuota.set('__global__', [...globalQuota, Date.now()]);
-    if (!hasApi) {
-      let url;
-      try { url = validateFilelistRssUrl(env.FILELIST_RSS_URL); }
-      catch { failure('FileList RSS configuration is invalid', 503); }
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 12000);
-      try {
-        const response = await fetchImpl(url, { signal: controller.signal, redirect: 'error',
-          headers: { accept: 'application/rss+xml, application/xml, text/xml' } });
-        if (!response.ok) failure('FileList RSS is currently unavailable', 502);
-        const xml = await response.text();
-        let value;
-        try { value = parseFilelistRss(xml, query); }
-        catch { failure('FileList RSS returned an invalid feed', 502); }
-        cache.set(key, { until: Date.now() + 300000, value });
-        return value;
-      } finally { clearTimeout(timeout); }
-    }
-    const url = new URL('https://filelist.io/api.php');
-    url.search = new URLSearchParams({ username: env.FILELIST_USERNAME, passkey: env.FILELIST_PASSKEY,
-      action: 'search-torrents', type: 'name', query, output: 'json' }).toString();
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    try {
-      const response = await fetchImpl(url, { signal: controller.signal, redirect: 'error', headers: { accept: 'application/json' } });
-      if (!response.ok) failure('FileList search is unavailable', 502);
-      const data = await response.json();
-      const rows = Array.isArray(data) ? data : (Array.isArray(data.data) ? data.data : Array.isArray(data.torrents) ? data.torrents : []);
-      const value = { configured: true, results: rows.slice(0, 35).map(v => ({
-        id: String(v.id ?? ''), name: String(v.name || v.title || '').slice(0, 220),
-        size: String(v.size || ''), seeders: Number(v.seeders || 0), imdb: String(v.imdb || '').slice(0, 40)
-      })) };
-      cache.set(key, { until: Date.now() + 300000, value });
-      return value;
-    } finally { clearTimeout(timeout); }
   }
   function staticAsset(req, res, pathname) {
     if (!['GET', 'HEAD'].includes(req.method)) return false;
@@ -329,7 +302,7 @@ export function createAppServer(options = {}) {
         if (pathname === '/api/library' && req.method === 'GET') {
           const type = url.searchParams.get('type') === 'series' ? 'Series' : 'Movie';
           return json(res, 200, await jellyfin(`/Users/${user.userId}/Items?${new URLSearchParams({
-            Recursive: 'true', IncludeItemTypes: type, Fields: 'Overview,Genres,PrimaryImageAspectRatio,MediaSources,People',
+            Recursive: 'true', IncludeItemTypes: type, Fields: 'Overview,Genres,PrimaryImageAspectRatio',
             SortBy: 'DateCreated', SortOrder: 'Descending', Limit: '150'
           })}`, user));
         }
@@ -405,14 +378,40 @@ export function createAppServer(options = {}) {
         }
         if (pathname === '/api/filelist/search' && req.method === 'GET') {
           const query = String(url.searchParams.get('q') || '').trim();
+          const category = String(url.searchParams.get('category') || '').trim();
           if (query.length < 2 || query.length > 100) failure('Search must have 2 to 100 characters');
-          return json(res, 200, await filelistSearch(query, user.userId));
+          return json(res, 200, await filelist.search(query, user.userId, category));
+        }
+        if (pathname === '/api/admin/filelist/settings' && req.method === 'GET') {
+          requireAdmin(user);
+          return json(res, 200, filelist.status());
+        }
+        if (pathname === '/api/admin/filelist/settings' && req.method === 'POST') {
+          verifyMutation(req); requireAdmin(user);
+          const settings = await bodyJson(req);
+          return json(res, 200, filelist.configure(settings));
+        }
+        const torrent = pathname.match(/^\/api\/admin\/filelist\/torrent\/(\d+)$/);
+        if (torrent && req.method === 'GET') {
+          requireAdmin(user);
+          const body = await filelist.torrentFor(user.userId, torrent[1]);
+          res.writeHead(200, { 'content-type': 'application/x-bittorrent',
+            'content-disposition': 'attachment; filename="filelist-' + torrent[1] + '.torrent"',
+            'content-length': body.length, 'cache-control': 'no-store',
+            'x-content-type-options': 'nosniff' });
+          res.end(body);
+          return;
+        }
+        const queue = pathname.match(/^\/api\/admin\/filelist\/queue\/(\d+)$/);
+        if (queue && req.method === 'POST') {
+          verifyMutation(req); requireAdmin(user);
+          return json(res, 200, await filelist.queueTorrent(user.userId, queue[1]));
         }
         if (pathname === '/api/admin/status' && req.method === 'GET') {
           requireAdmin(user);
           let reachable = false;
           try { await jellyfin('/System/Info/Public', user); reachable = true; } catch {}
-          return json(res, 200, { jellyfinReachable: reachable, filelistConfigured: Boolean((env.FILELIST_USERNAME && env.FILELIST_PASSKEY) || env.FILELIST_RSS_URL),
+          return json(res, 200, { jellyfinReachable: reachable, filelistConfigured: filelist.status().apiConfigured || filelist.status().rssConfigured,
             pendingRequests: db.prepare("SELECT COUNT(*) AS n FROM requests WHERE status='pending'").get().n });
         }
         return json(res, 404, { error: 'Endpoint not found' });
@@ -433,6 +432,19 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const { server } = createAppServer();
   const port = Number(process.env.PORT || 8099);
   server.listen(port, process.env.BIND_HOST || '127.0.0.1', () => {
-    console.log(`[CrimsonFin] listening on http://${process.env.BIND_HOST || '127.0.0.1'}:${port}`);
+    console.log('[CrimsonFin] remote gateway listening on loopback');
   });
+  // Optional pinned-certificate HTTPS listener for desktop clients on the LAN.
+  // Remote Funnel remains on the separate loopback listener above.
+  if (process.env.LOCAL_TLS_KEY_PATH && process.env.LOCAL_TLS_CERT_PATH) {
+    const handler = server.listeners('request')[0];
+    const local = https.createServer({
+      key: readFileSync(path.resolve(ROOT, process.env.LOCAL_TLS_KEY_PATH)),
+      cert: readFileSync(path.resolve(ROOT, process.env.LOCAL_TLS_CERT_PATH))
+    }, handler);
+    local.on('error', err => console.error('[CrimsonFin] LAN TLS listener failed:', err.code || err.name));
+    local.listen(Number(process.env.LOCAL_TLS_PORT || 9443), process.env.LOCAL_TLS_BIND || '0.0.0.0',
+      () => console.log('[CrimsonFin] encrypted LAN endpoint ready'));
+    createLanDiscovery(Number(process.env.LOCAL_DISCOVERY_PORT || 8098));
+  }
 }
