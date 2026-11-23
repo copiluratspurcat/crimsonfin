@@ -38,9 +38,9 @@ function upstream() {
 async function begin(server) { server.listen(0, '127.0.0.1'); await once(server, 'listening'); return `http://127.0.0.1:${server.address().port}`; }
 function end(server) { return new Promise(resolve => server.close(resolve)); }
 
-async function fixture(t) {
+async function fixture(t, env = {}) {
   const jf = upstream(); const jellyfinUrl = await begin(jf);
-  const gateway = createAppServer({ dbPath: ':memory:', env: { JELLYFIN_URL: jellyfinUrl, NODE_ENV: 'development', SESSION_ENCRYPTION_KEY: Buffer.alloc(32, 5).toString('base64') } });
+  const gateway = createAppServer({ dbPath: ':memory:', env: { JELLYFIN_URL: jellyfinUrl, NODE_ENV: 'development', SESSION_ENCRYPTION_KEY: Buffer.alloc(32, 5).toString('base64'), ...env } });
   const url = await begin(gateway.server);
   t.after(async () => { await end(gateway.server); await end(jf); gateway.db.close(); });
   async function login(name = 'friend') {
@@ -140,4 +140,25 @@ test('Romanian subtitle coverage is visible to admins only', async t => {
 
 test('playlist URL allowlist blocks external URLs', () => {
   assert.throws(() => rewriteM3u8('#EXTM3U\nhttps://example.com/evil.ts', 'http://localhost/Videos/' + VIDEO + '/master.m3u8', 'http://localhost'));
+});
+
+test('Discord monitor requires its own bearer token and exposes a limited snapshot', async t => {
+  const token = 'monitor-test-token-at-least-32-characters';
+  const { request, login } = await fixture(t, {
+    DISCORD_MONITOR_TOKEN: token, JELLYFIN_METADATA_API_KEY: 'jellyfin-private-token-123',
+    QBIT_USERNAME: '', QBIT_PASSWORD: ''
+  });
+  const health = await (await request('/api/health')).json();
+  assert.match(health.version, /^\d+\.\d+\.\d+$/);
+  const cookie = await login('admin');
+  assert.equal((await request('/api/discord-monitor', cookie)).status, 401);
+  assert.equal((await request('/api/discord-monitor', null, {
+    headers: { authorization: 'Bearer ' + 'x'.repeat(token.length) }
+  })).status, 401);
+  const response = await request('/api/discord-monitor', null, { headers: { authorization: 'Bearer ' + token } });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    items: [{ Id: VIDEO, Name: 'Test Movie', Type: 'Movie' }], downloads: null
+  });
+  assert.equal((await request('/api/admin/downloads', null, { headers: { authorization: 'Bearer ' + token } })).status, 401);
 });
