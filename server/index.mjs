@@ -119,6 +119,7 @@ const allowedMediaPath = pathname => {
     || /^\/Videos\/[a-f\d-]{32,36}\/stream(\.(mp4|mkv|webm|ts))?$/i.test(p)
     || /^\/Videos\/[a-f\d-]{32,36}\/(hls\d*|hls)\/[a-z\d_.\/-]+$/i.test(p)
     || /^\/Videos\/[a-f\d-]{32,36}\/Subtitles\/[\w.\/-]+$/i.test(p)
+    || /^\/Videos\/[a-f\d-]{32,36}\/[a-f\d-]{32,36}\/Subtitles\/\d{1,3}\/(?:0\/)?Stream\.vtt$/i.test(p)
     || /^\/Audio\/[a-f\d-]{32,36}\/[\w.\/-]+$/i.test(p);
 };
 function removeTokenQuery(uri) {
@@ -406,6 +407,27 @@ export function createAppServer(options = {}) {
         if (queue && req.method === 'POST') {
           verifyMutation(req); requireAdmin(user);
           return json(res, 200, await filelist.queueTorrent(user.userId, queue[1]));
+        }
+        if (pathname === '/api/admin/subtitles/status' && req.method === 'GET') {
+          requireAdmin(user);
+          let snapshot = null;
+          try {
+            const file = path.resolve(ROOT, env.DATA_DIR || './data', 'romanian-subtitle-audit.json');
+            if (existsSync(file) && statSync(file).size <= 64_000) {
+              const raw = JSON.parse(readFileSync(file, 'utf8'));
+              const summary = raw?.lastSummary || {};
+              const safeInt = v => Math.max(0, Math.min(100_000, Math.round(Number(v) || 0)));
+              snapshot = {
+                lastScanUtc: /^\d{4}-\d\d-\d\dT/.test(raw?.lastScanUtc || '') ? raw.lastScanUtc : '',
+                checked: safeInt(summary.checked),
+                haveRomanian: safeInt(summary.haveRomanian),
+                possiblyMissing: safeInt(summary.possiblyMissing),
+                attempted: safeInt(summary.attempted),
+                installed: safeInt(summary.installed)
+              };
+            }
+          } catch {}
+          return json(res, 200, { enabled: Boolean(snapshot), summary: snapshot });
         }
         if (pathname === '/api/admin/status' && req.method === 'GET') {
           requireAdmin(user);

@@ -18,6 +18,7 @@ function upstream() {
       } })); return;
     }
     if (!req.headers.authorization?.includes('Token="jellyfin-private-token-123"')) { res.writeHead(401); res.end(); return; }
+    if (p.pathname.includes('/Subtitles/') && p.pathname.endsWith('/Stream.vtt')) { res.setHeader('content-type', 'text/vtt'); res.end('WEBVTT\n\n00:00:01.000 --> 00:00:02.500\nSalut!'); return; }
     if (p.pathname.includes('master.m3u8')) { res.setHeader('content-type', 'application/vnd.apple.mpegurl'); res.end(`#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=450000\n/Videos/${VIDEO}/hls1/main/0.ts?ApiKey=jellyfin-private-token-123\n`); return; }
     if (p.pathname.includes('/hls1/main/0.ts') || p.pathname.includes('/stream')) {
       res.setHeader('accept-ranges', 'bytes');
@@ -82,6 +83,18 @@ test('proxy supports video range requests without leaking Jellyfin token', async
   assert.equal(denied.status, 403);
 });
 
+test('subtitle WebVTT proxy allows only the authenticated media source path', async t => {
+  const { request, login } = await fixture(t);
+  const mediaSource = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb';
+  const path = `/jellyfin/Videos/${VIDEO}/${mediaSource}/Subtitles/2/Stream.vtt`;
+  assert.equal((await request(path)).status, 401);
+  const cookie = await login();
+  const accepted = await request(path, cookie);
+  assert.equal(accepted.status, 200);
+  assert.match(await accepted.text(), /WEBVTT/);
+  assert.equal((await request('/jellyfin/Videos/' + VIDEO + '/' + mediaSource + '/Subtitles/2/../../System/Info', cookie)).status, 403);
+});
+
 test('request creation, owner visibility and admin review', async t => {
   const { request, login } = await fixture(t);
   const user = await login(); const admin = await login('admin');
@@ -95,6 +108,19 @@ test('request creation, owner visibility and admin review', async t => {
   const listed = await (await request('/api/requests', user)).json();
   assert.equal(listed.requests[0].status, 'approved');
   assert.equal((await request('/api/requests', user, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://evil.test' }, body: JSON.stringify({ title: 'Bad request', kind: 'movie' }) })).status, 403);
+});
+
+test('Romanian subtitle coverage is visible to admins only', async t => {
+  const { request, login } = await fixture(t);
+  assert.equal((await request('/api/admin/subtitles/status')).status, 401);
+  const regular = await login('friend');
+  assert.equal((await request('/api/admin/subtitles/status', regular)).status, 403);
+  const admin = await login('admin');
+  const response = await request('/api/admin/subtitles/status', admin);
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(typeof data.enabled, 'boolean');
+  assert.doesNotMatch(JSON.stringify(data), /JELLYFIN_METADATA_API_KEY|\.srt|passkey/);
 });
 
 test('playlist URL allowlist blocks external URLs', () => {

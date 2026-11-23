@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import Hls from 'hls.js';
+import { Player } from './player';
 import { ArrowLeft, ArrowRight, Check, ChevronDown, Clapperboard, Clock3, Film, Heart, Home, LogOut, Maximize, Menu, MonitorPlay, Pause, Play, Plus, Search, Send, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, Tv2, Volume2, X } from 'lucide-react';
 import './styles.css';
 
@@ -138,45 +138,7 @@ function Details({ item, onClose, onPlay, onMutation }: { item: Item; onClose: (
   const favorite = useMutation({ mutationFn: () => api(`/api/items/${item.Id}/favorite`, { method: media.UserData?.IsFavorite ? 'DELETE' : 'POST' }), onSuccess: () => { details.refetch(); onMutation(); } });
   return <div className="modal-overlay" onMouseDown={e => { if (e.currentTarget === e.target) onClose(); }}><div className="details-panel" role="dialog" aria-modal="true" aria-label={item.Name}><div className="details-backdrop" style={{ backgroundImage: `linear-gradient(0deg, #111723 0%, rgba(17,23,35,.18) 90%), url('${art(item.Id,'Backdrop')}')` }}/><button className="modal-close" title="Close details" onClick={onClose}><X size={22}/></button><div className="details-body"><span className="eyebrow">{item.Type === 'Series' ? 'TELEVISION SERIES' : 'FEATURE FILM'}</span><h1>{item.Name}</h1><div className="meta"><span>{media.ProductionYear}</span>{media.CommunityRating && <span className="rating">★ {media.CommunityRating.toFixed(1)}</span>}<span>{formatTime(media.RunTimeTicks)}</span>{media.Genres?.slice(0, 3).map(g => <span key={g}>{g}</span>)}</div><p>{media.Overview || 'No synopsis is available for this title.'}</p><div className="details-actions">{item.Type !== 'Series' && <button className="btn btn-primary" onClick={() => onPlay(media)}><Play size={18} fill="currentColor"/>{media.UserData?.PlaybackPositionTicks ? 'Resume playback' : 'Play now'}</button>}<button className="btn btn-ghost" onClick={() => favorite.mutate()}><Heart size={18} fill={media.UserData?.IsFavorite ? 'currentColor' : 'none'}/>{media.UserData?.IsFavorite ? 'In favorites' : 'Add to favorites'}</button></div>{item.Type === 'Series' && <div className="episodes"><div className="episodes-heading"><h2>Episodes</h2><select aria-label="Choose season" value={seasonId} onChange={e => setSeasonId(e.target.value)}>{(seasons.data?.Items || []).map(s => <option key={s.Id} value={s.Id}>{s.Name}</option>)}</select></div>{episodes.isLoading ? <p>Loading episodes…</p> : episodes.data?.Items.length ? episodes.data.Items.map(ep => <button className="episode" key={ep.Id} onClick={() => onPlay(ep)}><EpisodeArtwork item={ep} seriesId={item.Id}/><span><strong>{ep.IndexNumber ?? '–'}. {ep.Name}</strong><small>{ep.Overview || 'Play this episode'}</small></span><Play size={18}/></button>) : <div className="empty-state">No episodes in this season.</div>}</div>}{media.MediaSources?.[0]?.MediaStreams && <div className="streams"><h3>Media information</h3><p>{media.MediaSources[0].MediaStreams?.filter(s => s.Type === 'Video' || s.Type === 'Audio').map(s => s.DisplayTitle || s.Codec).join(' · ')}</p></div>}</div></div></div>;
 }
-function Player({ item, onClose }: { item: Item; onClose: () => void }) {
-  const ref = useRef<HTMLVideoElement>(null);
-  const [status, setStatus] = useState('Preparing playback…');
-  const [quality, setQuality] = useState(12_000_000);
-  const [direct, setDirect] = useState(false);
-  useEffect(() => {
-    const video = ref.current; if (!video) return;
-    let hls: Hls | null = null;
-    let began = false;
-    const getTicks = () => Math.round((video.currentTime || 0) * 10_000_000);
-    const report = (event: 'Playing' | 'Progress' | 'Stopped') => {
-      if (!began && event !== 'Playing') return;
-      fetch('/api/playback', { method: 'POST', credentials: 'same-origin', keepalive: event === 'Stopped',
-        headers: { 'content-type': 'application/json' }, body: JSON.stringify({ itemId: item.Id, positionTicks: getTicks(), isPaused: video.paused, event, method: direct ? 'DirectPlay' : 'Transcode' }) }).catch(() => {});
-    };
-    const onPlaying = () => { setStatus(''); if (!began) { began = true; report('Playing'); } };
-    const onError = () => setStatus('Playback could not start. Try direct playback or lower the quality.');
-    const onEnded = () => report('Stopped');
-    video.addEventListener('playing', onPlaying); video.addEventListener('error', onError); video.addEventListener('ended', onEnded);
-    const uri = direct ? `/jellyfin/Videos/${item.Id}/stream?static=true` : `/jellyfin/Videos/${item.Id}/master.m3u8?VideoCodec=h264&AudioCodec=aac&MaxStreamingBitrate=${quality}`;
-    if (direct) { video.src = uri; video.play().catch(() => setStatus('Press play to begin.')); }
-    else if (Hls.isSupported()) {
-      hls = new Hls({ enableWorker: true, backBufferLength: 25, maxBufferLength: 30, lowLatencyMode: false });
-      hls.on(Hls.Events.ERROR, (_event, info) => { if (info.fatal) setStatus(`Unable to load stream (${info.type}). Try direct playback.`); });
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MEDIA_ATTACHED, () => hls?.loadSource(uri));
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        if (item.UserData?.PlaybackPositionTicks) video.addEventListener('loadedmetadata', () => { video.currentTime = item.UserData!.PlaybackPositionTicks! / 10_000_000; }, { once: true });
-        video.play().catch(() => setStatus('Press play to begin.'));
-      });
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = uri; video.play().catch(() => setStatus('Press play to begin.')); }
-    else setStatus('HLS playback is unavailable on this device. Switch to direct mode.');
-    const interval = setInterval(() => report('Progress'), 15000);
-    const onPause = () => report('Progress');
-    video.addEventListener('pause', onPause);
-    return () => { if (began) report('Stopped'); clearInterval(interval); video.removeEventListener('pause', onPause); video.removeEventListener('playing', onPlaying); video.removeEventListener('error', onError); video.removeEventListener('ended', onEnded); hls?.destroy(); video.pause(); video.removeAttribute('src'); video.load(); };
-  }, [item, quality, direct]);
-  return <div className="player-page" role="dialog" aria-label={`Playing ${item.Name}`} aria-modal="true"><div className="player-top"><button className="icon-button" title="Close player" onClick={onClose}><ArrowLeft size={24}/></button><div><strong>{item.SeriesName || item.Name}</strong><small>{item.SeriesName ? item.Name : 'Now playing'}</small></div><span className="player-badge"><MonitorPlay size={14}/> {direct ? 'DIRECT' : 'HLS'}</span></div><video ref={ref} controls playsInline preload="metadata" autoPlay/><div className="player-bottom"><div>{status || 'Enjoy your movie'}<small>Playback progress syncs with Jellyfin.</small></div><div className="player-options"><label>STREAM QUALITY <select value={quality} disabled={direct} onChange={e => setQuality(Number(e.target.value))}><option value={4_000_000}>4 Mbps</option><option value={8_000_000}>8 Mbps</option><option value={12_000_000}>12 Mbps</option><option value={20_000_000}>20 Mbps</option></select></label><label className="direct-toggle"><input type="checkbox" checked={direct} onChange={e => setDirect(e.target.checked)}/> Direct play</label></div></div></div>;
-}
+
 function MediaRequests({ user }: { user: Account }) {
   const qc = useQueryClient();
   const [kind, setKind] = useState<'movie' | 'series'>('movie'); const [title, setTitle] = useState('');
@@ -198,9 +160,33 @@ function Admin() {
   const requests = useQuery({ queryKey: ['requests'], queryFn: () => api<{ requests: RequestEntry[] }>('/api/requests') });
   const status = useQuery({ queryKey: ['adminStatus'], queryFn: () => api<{ jellyfinReachable: boolean; filelistConfigured: boolean; pendingRequests: number }>('/api/admin/status'), refetchInterval: 45000 });
   const mutate = useMutation({ mutationFn: (arg: { id: string; status: string }) => api(`/api/requests/${arg.id}`, { method: 'PATCH', body: JSON.stringify({ status: arg.status }) }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['requests'] }); qc.invalidateQueries({ queryKey: ['adminStatus'] }); } });
-  return <section className="content-section"><div className="heading"><p className="eyebrow">ADMINISTRATOR ACCESS</p><h1>Server & requests</h1><p>Review your server's connection and manage media suggestions.</p></div><div className="admin-stats"><div className="stat"><small>JELLYFIN CONNECTION</small><strong>{status.isLoading ? 'Checking…' : status.isError ? 'Unavailable' : status.data?.jellyfinReachable ? 'Connected' : 'Not connected'}</strong></div><div className="stat"><small>FILELIST INTEGRATION</small><strong>{status.isLoading ? 'Checking…' : status.isError ? 'Unavailable' : status.data?.filelistConfigured ? 'Configured' : 'Not configured'}</strong></div><div className="stat"><small>PENDING REQUESTS</small><strong>{status.data?.pendingRequests ?? '–'}</strong></div></div><div className="panel admin-list"><h2>Review requests</h2>{requests.data?.requests.length ? requests.data.requests.map(r => <div className="review-row" key={r.id}><div><strong>{r.title}</strong><small>{r.user_name} · {r.kind}{r.year ? ` · ${r.year}` : ''} · {r.notes || 'No additional notes'}</small></div><select disabled={mutate.isPending} aria-label={`Status for ${r.title}`} value={r.status} onChange={e => mutate.mutate({ id: r.id, status: e.target.value })}><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="fulfilled">Fulfilled</option></select></div>) : <div className="empty-state">No requests to review.</div>}{mutate.error && <p className="error">{mutate.error.message}</p>}</div><FileListConfiguration /></section>;
+  return <section className="content-section"><div className="heading"><p className="eyebrow">ADMINISTRATOR ACCESS</p><h1>Server & requests</h1><p>Review your server's connection and manage media suggestions.</p></div><div className="admin-stats"><div className="stat"><small>JELLYFIN CONNECTION</small><strong>{status.isLoading ? 'Checking…' : status.isError ? 'Unavailable' : status.data?.jellyfinReachable ? 'Connected' : 'Not connected'}</strong></div><div className="stat"><small>FILELIST INTEGRATION</small><strong>{status.isLoading ? 'Checking…' : status.isError ? 'Unavailable' : status.data?.filelistConfigured ? 'Configured' : 'Not configured'}</strong></div><div className="stat"><small>PENDING REQUESTS</small><strong>{status.data?.pendingRequests ?? '–'}</strong></div></div><div className="panel admin-list"><h2>Review requests</h2>{requests.data?.requests.length ? requests.data.requests.map(r => <div className="review-row" key={r.id}><div><strong>{r.title}</strong><small>{r.user_name} · {r.kind}{r.year ? ` · ${r.year}` : ''} · {r.notes || 'No additional notes'}</small></div><select disabled={mutate.isPending} aria-label={`Status for ${r.title}`} value={r.status} onChange={e => mutate.mutate({ id: r.id, status: e.target.value })}><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="fulfilled">Fulfilled</option></select></div>) : <div className="empty-state">No requests to review.</div>}{mutate.error && <p className="error">{mutate.error.message}</p>}</div><FileListConfiguration /><SubtitleCoverage /></section>;
 }
 
+
+function SubtitleCoverage() {
+  const stats = useQuery({ queryKey: ['subtitleCoverage'], queryFn: () =>
+    api<{ enabled: boolean; summary?: { checked:number; haveRomanian:number;
+      possiblyMissing:number; attempted:number; installed:number; lastScanUtc:string } }>('/api/admin/subtitles/status'),
+    refetchInterval: 120000 });
+  const summary = stats.data?.summary;
+  const percent = summary?.checked ? Math.round(summary.haveRomanian * 100 / summary.checked) : 0;
+  return <div className="panel subtitle-coverage">
+    <div className="subtitle-coverage-title"><span className="eyebrow"><ShieldCheck size={14}/> ROMANIAN SUBTITLE COVERAGE</span>
+      <h2>Community captions audit</h2></div>
+    {summary ? <>
+      <div className="subtitle-numbers">
+        <div><strong>{summary.checked}</strong><span>Media checked</span></div>
+        <div><strong>{summary.haveRomanian}</strong><span>With Romanian subtitles</span></div>
+        <div><strong>{summary.possiblyMissing}</strong><span>Potentially missing</span></div>
+      </div>
+      <div className="subtitle-progress" role="progressbar" aria-label="Romanian subtitle coverage"
+        aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ width: `${percent}%` }}/></div>
+      <p className="muted">{percent}% indexed coverage · Last scan: {summary.lastScanUtc ? new Date(summary.lastScanUtc).toLocaleString() : 'Unknown'}.
+        {' '}Downloads require available community sources and matching releases; no automatic machine translations are produced by this audit.</p>
+    </> : <p className="muted">{stats.isLoading ? 'Checking subtitle audit status…' : 'The subtitle audit has not run yet or cannot be reached.'}</p>}
+  </div>;
+}
 
 function FileListConfiguration() {
   const qc = useQueryClient();

@@ -176,6 +176,53 @@ The server can run `scripts/repair-episode-metadata.mjs` via an optional systemd
 
 The full FileList API uses the **FileList-specific username** and the private feed/API passkey. Administrators can configure this in CrimsonFin → Admin → FileList. RSS-only search remains available if no username is configured. The API uses HTTP Basic credentials over HTTPS and never sends the passkey in URL parameters or to the web browser. Admin-only torrent fetching and queuing to the loopback-only qBittorrent instance requires `QBIT_URL`, `QBIT_USERNAME`, `QBIT_PASSWORD`, and optionally `QBIT_SAVE_PATH` in the **private server .env**. Media request users are not allowed to trigger torrent downloads.
 
-### v2.1.1 Windows/LAN reliability fix
+## CrimsonFin Theater v2.2: playback controls and Romanian subtitles
 
-Fixed a certificate pinning bug in Electron that rejected an otherwise valid self-signed LAN certificate and fell back to slow remote Funnel access. The desktop now calculates the actual SHA-256 fingerprint from Electron PEM certificate data before comparing it with the pinned value. Request timeouts now report a clear error instead of leaving FileList settings indefinitely stuck on Saving. Reinstall the v2.1.1 desktop client to receive the routing fix.
+The theater has a deep-red theme, audio stream selector, selectable WebVTT
+subtitles (with Romanian preferred where indexed), subtitle time-offset
+adjustment (±15 seconds), ±10-second playback skip, timeline scrubbing,
+quality and Direct/HLS options. Audio changes use Jellyfin's HLS
+`AudioStreamIndex`; text subtitles use its authenticated `Stream.vtt` API.
+Track switching and offset changes are scoped to playback, not media files.
+
+### Romanian subtitle audit
+
+`scripts/install-romanian-subs.sh` installs a non-AI user-level timer that
+checks the Jellyfin movie and TV library twice each day. It can automatically
+install Romanian subtitles *only when* Podnapisi or TVSubtitles provides a
+validated text subtitle with plausible Romanian language and timing.
+The audit uses a 7-day cooldown for failed attempts, never overwrites files,
+never machine-translates English, and exposes a progress summary only to
+Jellyfin admins in CrimsonFin's admin panel.
+
+Audit manually: `python3 scripts/romanian-subtitle-audit.py`
+Attempt a few missing subtitles: `python3 scripts/romanian-subtitle-audit.py --apply --limit 4`
+
+Important: an older *separate root-managed* Jellyfin subtitle autopilot may
+still perform Argos machine translations. If already installed, the server
+administrator must run this one-time command to disable its AI fallback:
+
+`sudo python3 ~/CrimsonFin-Client/scripts/disable-legacy-ai-translation.py`
+
+This preserves the old JSON configuration in a private backup, sets
+`translate_english=false`, and does not stop the non-AI subtitle search
+timer. **Do not assume AI translations are disabled until this is done.**
+
+The existing Lioness S3 Romanian sidecars were backed up privately before
+further changes. Their current content was preserved; no unverified
+replacement was installed. Public subtitles from RegieLive were discoverable,
+but the provider later denied download access. An official provider such as
+Subs.ro or SubDL needs a user-generated API key, and availability varies.
+
+The suggested LavX OpenSubtitles.org scraper is a separate self-hosted service
+or Bazarr+ plugin; it was evaluated but not deployed. Provider limits and
+site access controls must be respected.
+
+### Security notes
+
+The media streaming proxy only allows per-user authenticated Jellyfin media
+paths. Subtitle URLs must identify a Jellyfin media source and text WebVTT
+stream. The subtitle audit never exposes server API keys or the underlying
+media paths to CrimsonFin users. Subtitle file provenance and human translation
+quality cannot be fully guaranteed automatically; inspect uncertain matches
+before using them as permanent replacements.
