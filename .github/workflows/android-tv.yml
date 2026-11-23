@@ -8,6 +8,7 @@ on:
       - 'desktop/release-target.json'
       - '.github/workflows/android-tv.yml'
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -34,8 +35,9 @@ jobs:
             "$sdkmanager" 'platforms;android-35' 'build-tools;35.0.0'
           fi
       - run: gradle --no-daemon :app:lintDebug :app:assembleDebug
+      - run: cp app/build/outputs/apk/debug/app-debug.apk ../CrimsonFin-TV-preview.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: CrimsonFin-TV-debug
-          path: android-tv/app/build/outputs/apk/debug/app-debug.apk
+          name: crimsonfin-android-tv
+          path: CrimsonFin-TV-preview.apk
           if-no-files-found: error
