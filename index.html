@@ -1,5 +1,26 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0b090c"><title>CrimsonFin</title><link rel="icon" type="image/svg+xml" href="./crimsonfin.svg"></head><body><div id="startup-splash" class="startup-splash" role="status" aria-label="Starting CrimsonFin">
+<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0b090c"><title>CrimsonFin</title><script>(function(){try{var t=localStorage.getItem('crimsonfin.lastTheme');if(['crimson','ocean','violet','emerald','gold','mono'].includes(t))document.documentElement.dataset.theme=t;}catch(e){}})();</script><link rel="icon" type="image/svg+xml" href="./crimsonfin.svg"></head><body><div id="startup-splash" class="startup-splash" role="status" aria-label="Starting CrimsonFin">
 <div class="splash-ambient splash-ambient-a"></div><div class="splash-ambient splash-ambient-b"></div>
-<div class="splash-center"><div class="splash-logo-wrap"><div class="splash-orbit"></div><img src="./crimsonfin.svg" alt="" class="splash-logo"></div>
+<div class="splash-center"><div class="splash-logo-wrap"><div class="splash-orbit"></div><div class="splash-logo" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" class="theme-brand-mark" viewBox="0 0 512 512" role="img" aria-label="CrimsonFin logo" focusable="false">
+<defs>
+<linearGradient id="crimson-splash-fill" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0" style="stop-color:var(--logo-high,#ff9cab)"/>
+<stop offset=".45" style="stop-color:var(--logo-mid,#ef3e63)"/>
+<stop offset="1" style="stop-color:var(--logo-low,#a41340)"/>
+</linearGradient>
+<linearGradient id="crimson-splash-sheen" x1="0" x2="1" y1="0" y2="1">
+<stop offset="0" stop-color="#ffffff" stop-opacity=".65"/>
+<stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+</linearGradient>
+</defs>
+<rect x="20" y="20" width="472" height="472" rx="122" style="fill:var(--logo-frame,#170911)"/>
+<rect x="33" y="33" width="446" height="446" rx="108" fill="url(#crimson-splash-fill)"/>
+<path d="M74 182Q74 91 194 73" fill="none" stroke="url(#crimson-splash-sheen)" stroke-width="17" stroke-linecap="round"/>
+<path d="M163 131C195 111 225 105 258 105c83 0 147 45 165 115" fill="none" stroke="#000000" stroke-opacity=".32" stroke-width="28" stroke-linecap="round"/>
+<path d="M349 349a134 134 0 0 1-204-25" fill="none" stroke="#000000" stroke-opacity=".32" stroke-width="28" stroke-linecap="round"/>
+<path d="M210 160c0-16 17-26 31-18l155 96c14 9 14 28 0 36l-155 96c-14 9-31-1-31-17z" fill="#000000" opacity=".28" transform="translate(0 12)"/>
+<path d="M190 154c0-19 21-31 37-21l175 108c16 10 16 31 0 41L227 390c-16 10-37-2-37-21z" style="fill:var(--logo-play,#fff4f6)"/>
+<path d="M190 154c0-19 21-31 37-21l175 108c16 10 16 31 0 41L227 390c-16 10-37-2-37-21z" fill="url(#crimson-splash-sheen)" opacity=".34"/>
+<circle cx="400" cy="107" r="17" style="fill:var(--logo-high,#ff9cab)" opacity=".86"/>
+</svg></div></div>
 <div class="splash-title">CRIMSON<span>FIN</span></div><div class="splash-tagline">YOUR CINEMA. REIMAGINED.</div>
 <div class="splash-progress"><span></span></div><p class="splash-caption">LIGHTS. CAMERA. ACTION.</p></div></div><div id="app"></div><script type="module" src="/src/main.js"></script></body></html>

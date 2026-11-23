@@ -1,0 +1,132 @@
+/* CrimsonFin v1.2.3 — Harmony.
+ * One consistent surface language for all six themes. Place AFTER the previous
+ * style sheets so existing Jellyfin views and playback continue to work.
+ * Artwork and the video element are never tinted or filtered by a theme.
+ */
+:root {
+  --h-chrome: color-mix(in srgb, var(--panel) 68%, var(--base));
+  --h-surface: color-mix(in srgb, var(--card) 51%, var(--base));
+  --h-raised: color-mix(in srgb, var(--card) 72%, var(--base));
+  --h-edge: color-mix(in srgb, var(--heading) 8%, transparent);
+  --h-soft-edge: color-mix(in srgb, var(--heading) 4%, transparent);
+  --h-accent-wash: color-mix(in srgb, var(--accent) 11%, transparent);
+  --h-text-muted: color-mix(in srgb, var(--secondary) 76%, var(--base));
+  --h-shade: color-mix(in srgb, var(--base) 89%, transparent);
+}
+html,body,#app,.shell,.main,.content{background:var(--base);color:var(--heading)}
+#app,.shell,.main,.content,.sidebar,.topbar,.bottom-footer,
+.settings-panels section,.search-trigger,.sound-toggle,.theme-swatch,
+.side-nav button,.btn,.artwork-picker,.episode-card {
+  transition-property:background-color,border-color,color,box-shadow;
+  transition-duration:.32s;
+  transition-timing-function:cubic-bezier(.22,.8,.22,1);
+}
+/* The window and its sidebar/header/footer should read as a single surface. */
+.window-drag,.window-controls{background:var(--h-chrome);border-color:var(--h-soft-edge)}
+.window-controls button{background:transparent;color:var(--h-text-muted)}
+.window-controls button:hover{background:var(--h-accent-wash);color:var(--heading)}
+.sidebar{
+  background:linear-gradient(165deg,var(--h-chrome),var(--base) 85%);
+  border-right:1px solid var(--h-soft-edge);
+  box-shadow:18px 0 55px color-mix(in srgb,var(--base) 35%,transparent);
+}
+.sidebar-brand {margin-bottom:56px}
+.side-caption{color:var(--h-text-muted)}
+.side-nav button{border-radius:10px;color:var(--h-text-muted)}
+.side-nav button:hover{
+  background:var(--h-accent-wash);
+  color:var(--heading);
+}
+.side-nav button.active{
+  background:linear-gradient(90deg,var(--h-accent-wash),transparent 95%);
+  color:var(--accent-bright);
+}
+.side-nav button.active::before{border-radius:0 4px 4px 0}
+.sidebar-bottom{border-top:1px solid var(--h-soft-edge)}
+.server-status strong{color:var(--secondary)}
+.server-status small,.logout-button{color:var(--h-text-muted)}
+.topbar{
+  background:linear-gradient(180deg,var(--h-chrome),var(--base));
+  border-bottom:1px solid var(--h-soft-edge);
+}
+.crumb{color:var(--h-text-muted)}
+.search-trigger,.sound-toggle{
+  background:var(--h-surface);
+  border:1px solid var(--h-edge);
+  color:var(--secondary);
+  border-radius:9px;
+}
+.search-trigger:hover,.sound-toggle:hover{background:var(--h-accent-wash);border-color:color-mix(in srgb,var(--accent) 50%,transparent)}
+.search-trigger kbd{border-color:var(--h-edge);color:var(--secondary)}
+.bottom-footer{
+  background:linear-gradient(0deg,var(--h-chrome),var(--base));
+  border-top:1px solid var(--h-soft-edge);
+  color:var(--h-text-muted);
+}
+.bottom-footer span,.app-version{color:var(--accent-bright)}
+.bottom-footer .footer-right{color:var(--h-text-muted)}
+/* The hero image gently blends into the collection instead of ending abruptly
+   at a rectangle with a different color temperature. */
+.hero,.detail-page{background:var(--base)}
+.hero-backdrop,.detail-backdrop{background-color:var(--base)}
+.hero-vignette{
+  background:
+    linear-gradient(90deg,var(--base) 0%,var(--h-shade) 19%,color-mix(in srgb,var(--base) 38%,transparent) 68%,transparent 100%),
+    linear-gradient(0deg,var(--base) 0%,color-mix(in srgb,var(--base) 65%,transparent) 15%,transparent 51%),
+    linear-gradient(180deg,color-mix(in srgb,var(--base) 14%,transparent),transparent 36%);
+}
+.detail-shade{
+  background:
+    linear-gradient(90deg,var(--base) 0%,var(--h-shade) 26%,color-mix(in srgb,var(--base) 25%,transparent) 90%),
+    linear-gradient(0deg,var(--base) 0%,transparent 38%);
+}
+.home-sections,.detail-children{background:var(--base)}
+.hero-content p,.row-heading p,.listing-header p,.detail-overview{color:var(--secondary)}
+/* Normalize cards, modals and text inputs instead of mixing hard-coded red
+   panels, borders and shadows from different iterations of CrimsonFin. */
+.settings-panels section,.episode-card,.player-settings,.artwork-picker{
+  background:var(--h-raised);
+  border:1px solid var(--h-edge);
+  border-radius:14px;
+  box-shadow:0 12px 45px color-mix(in srgb,var(--base) 28%,transparent);
+}
+.episode-card:hover{border-color:color-mix(in srgb,var(--accent) 46%,var(--h-edge));background:color-mix(in srgb,var(--h-raised) 93%,var(--accent))}
+.artwork-choice,.theme-swatch{
+  background:var(--h-surface);border-color:var(--h-edge);color:var(--heading);
+}
+.theme-swatch[aria-pressed="true"]{
+  background:color-mix(in srgb,var(--h-raised) 89%,var(--accent));
+  border-color:var(--accent);
+}
+.input-wrap,.big-search,.pref-row select,.pref-row input:not([type=checkbox]),
+.search-filters select,.episode-tools select,.player-settings select,.offset-control input{
+  background:var(--h-surface);
+  color:var(--heading);
+  border-color:var(--h-edge);
+  border-radius:9px;
+}
+.pref-row{border-bottom-color:var(--h-edge)}
+.btn-primary{background:linear-gradient(115deg,var(--accent),var(--accent-strong));color:var(--base);border-radius:8px}
+.btn-glass,.btn-outline{background:color-mix(in srgb,var(--h-raised) 70%,transparent);border-color:var(--h-edge);color:var(--heading);border-radius:8px}
+.btn-glass:hover,.btn-outline:hover{background:var(--h-accent-wash);border-color:var(--accent)}
+.row-kicker,.row-count,.eyebrow,.hero-badge,.red-diamond,.metadata-credit{color:var(--accent-bright)}
+.meta-bullet,.red-bar,.crumb-marker,.live-dot,.status-dot{background:var(--accent)}
+.detail-genre span{border-color:var(--h-edge);background:var(--h-surface)}
+.poster-card:hover{filter:drop-shadow(0 14px 23px color-mix(in srgb,var(--accent) 19%,transparent))}
+.poster-image{border-radius:9px}
+.continue-card .poster-text .continue-episode{color:var(--h-text-muted)}
+/* Cohesive secondary UI, but leave actual media pixels unchanged. */
+.player-top,.player-bottom{background:var(--base)}
+.player-extras button,.offset-control button,.seek-control button{background:var(--h-raised);border-color:var(--h-edge)}
+.login-panel{background:var(--base)}
+.login-art{background:radial-gradient(ellipse at 65% 46%,var(--h-accent-wash),transparent 58%),linear-gradient(120deg,var(--h-chrome),var(--base))}
+.login-copy p,.login-art p{color:var(--secondary)}
+.smart-check{color:var(--secondary)!important}
+::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--accent) 30%,var(--panel))}
+@media (max-width:900px){.sidebar{box-shadow:8px 0 25px color-mix(in srgb,var(--base) 30%,transparent)}}
+@media (prefers-reduced-motion:reduce){
+  #app,.shell,.main,.content,.sidebar,.topbar,.bottom-footer,.settings-panels section,
+  .search-trigger,.sound-toggle,.theme-swatch,.side-nav button,.btn,.artwork-picker,.episode-card{transition:none!important}
+}
+html.no-motion #app,html.no-motion .shell,html.no-motion .main,
+html.no-motion .sidebar,html.no-motion .topbar,html.no-motion .bottom-footer{transition:none!important}

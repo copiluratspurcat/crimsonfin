@@ -1,0 +1,24 @@
+[Unit]
+Description=CrimsonFin Jellyfin media request companion
+After=network-online.target jellyfin.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=crimson-requests
+Group=crimson-requests
+WorkingDirectory=/opt/crimsonfin-requests
+EnvironmentFile=/etc/crimsonfin-requests.env
+ExecStart=/usr/bin/python3 /opt/crimsonfin-requests/requests_service.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# Replace /mnt/ADATA and /mnt/WD with the actual mountpoints. It must match MEDIA_DRIVES.
+ReadWritePaths=/var/lib/crimsonfin-requests /mnt/ADATA /mnt/WD
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

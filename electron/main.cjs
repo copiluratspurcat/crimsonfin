@@ -208,6 +208,39 @@ app.whenReady().then(()=>{
     url.searchParams.set('api_key',session.token);
     return url.toString();
   });
+  ipcMain.handle('requests:call', async (_event, payload = {}) => {
+    if (!session) throw Error('Sign in to Jellyfin first.');
+    const method = payload.method || 'GET';
+    const endpoint = payload.endpoint;
+    if (!['GET', 'POST'].includes(method) || typeof endpoint !== 'string' ||
+        !/^\/api\/(?:status|catalog|requests(?:\/[a-f0-9-]{36}(?:\/(?:matches|approve|cancel|retry|start))?)?)(?:\?[A-Za-z0-9%._~&=+\-]*)?$/.test(endpoint)) {
+      throw Error('Request API path is not allowed.');
+    }
+    if (payload.body && JSON.stringify(payload.body).length > 14000) throw Error('Request is too large.');
+    const base = new URL(session.server);
+    const url = new URL('/requests' + endpoint, base);
+    if (url.origin !== base.origin) throw Error('Invalid request service origin.');
+    let response;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 11000);
+    try {
+      response = await net.fetch(url.toString(), {
+        method,
+        headers: { 'X-Emby-Token': session.token, 'Accept':'application/json',
+          ...(method==='POST'?{'Content-Type':'application/json'}:{}) },
+        body: method==='POST' ? JSON.stringify(payload.body || {}) : undefined,
+        redirect:'error', signal:controller.signal
+      });
+    } catch (error) {
+      throw Error('Request service unavailable. Check the server companion and /requests reverse proxy.');
+    } finally {
+      clearTimeout(timeout);
+    }
+    const text = await response.text();
+    let data; try { data = JSON.parse(text); } catch { throw Error('The request service returned a non-JSON response. Check the reverse proxy.'); }
+    if (!response.ok) throw Error(String(data.error || data.message || 'Request service error (' + response.status + ')').slice(0,260));
+    return data;
+  });
   ipcMain.handle('api:subtitle',async(_,{path:subtitlePath})=>{
     if(!session)throw Error('Not signed in');
     if(!/^\/Videos\/[a-f0-9-]+\/[a-f0-9-]+\/Subtitles\/\d+\/Stream\.vtt$/i.test(subtitlePath))throw Error('Invalid subtitle path');
@@ -218,6 +251,168 @@ app.whenReady().then(()=>{
     const body=await response.text();
     if(body.length>12_000_000)throw Error('Subtitle file is too large');
     return body;
+  });
+  // Artwork alternatives come only from providers registered with Jellyfin.
+  // Never download arbitrary renderer-supplied URLs or expose server tokens.
+  const artworkHosts = new Set(['image.tmdb.org','artworks.thetvdb.com','static.tvmaze.com','assets.fanart.tv','fanart.tv','images.fanart.tv']);
+  const allowedPosterUrl = text => {
+    try {const u=new URL(text);return u.protocol==='https:' && !u.username && !u.password && (!u.port || u.port==='443') && artworkHosts.has(u.hostname.toLowerCase()) && !u.hash}
+    catch{return false}
+  };
+  const artworkChoices = new Map();
+  ipcMain.handle('artwork:options', async (_event, itemId) => {
+    if (!session) throw Error('Sign in first');
+    if(!/^[a-f0-9-]{32,36}$/i.test(String(itemId)))throw Error('Invalid media item ID');
+    const result=await request(session.server,`/Items/${itemId}/RemoteImages?type=Primary&limit=20`,session.token);
+    const choices=(result?.Images||[]).filter(img=>img?.Type==='Primary' && allowedPosterUrl(img.Url))
+      .slice(0,16).map(img=>({Url:img.Url,Type:'Primary',Width:img.Width||0,Height:img.Height||0,ProviderName:String(img.ProviderName||'Metadata provider').slice(0,80)}));
+    for(const img of choices)artworkChoices.set(img.Url,Date.now());
+    if(artworkChoices.size>250)for(const [key,timestamp] of artworkChoices)if(Date.now()-timestamp>60*60*1000)artworkChoices.delete(key);
+    return choices;
+  });
+  ipcMain.handle('artwork:image',async(_event,imageUrl)=>{
+    if(!session)throw Error('Sign in first');
+    if(!allowedPosterUrl(imageUrl))throw Error('Artwork host is not permitted');
+    // A user can only fetch an image previously offered by their Jellyfin server.
+    // Session changes clear this map to avoid crossing accounts.
+    const timestamp=artworkChoices.get(imageUrl);
+    if(!timestamp||Date.now()-timestamp>60*60*1000){
+      // Request a fresh list before using a saved artwork override.
+      // Saved poster URLs are not arbitrary network fetch capabilities.
+      const safe=String(imageUrl);
+      if(![...artworkChoices.keys()].includes(safe))throw Error('Artwork option expired; choose the poster again');
+      throw Error('Artwork option expired; choose the poster again');
+    }
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);
+    try{
+      const response=await net.fetch(imageUrl,{headers:{Accept:'image/jpeg,image/png,image/webp'},redirect:'error',signal:controller.signal});
+      if(!response.ok)throw Error('Artwork provider returned '+response.status);
+      const mime=(response.headers.get('content-type')||'').split(';')[0].toLowerCase();
+      if(!['image/jpeg','image/png','image/webp'].includes(mime))throw Error('Unsupported image format');
+      if(Number(response.headers.get('content-length'))>3500000)throw Error('Artwork image is too large');
+      const buffer=Buffer.from(await response.arrayBuffer());
+      if(buffer.length>3500000)throw Error('Artwork image is too large');
+      return `data:${mime};base64,${buffer.toString('base64')}`;
+    }finally{clearTimeout(timer)}
+  });
+  // Public TV metadata. No Jellyfin token, media path, or password is sent to TVmaze.
+  const tvmazeCache = new Map();
+  const externalJSON = async (url) => {
+    if (new URL(url).origin !== 'https://api.tvmaze.com') throw Error('Metadata host not permitted');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6500);
+    try {
+      const response = await net.fetch(url,{headers:{Accept:'application/json'},redirect:'error',signal:controller.signal});
+      if (response.status === 404) return null;
+      if (!response.ok) throw Error('Metadata provider returned '+response.status);
+      const data = await response.json();return data;
+    } finally {clearTimeout(timer)}
+  };
+  // Fetch the canonical series poster from TVmaze, matching by TVDB ID or
+  // exact title and release year. Movies use Jellyfin's own remote image providers.
+  const canonicalPosters = new Map();
+  ipcMain.handle('artwork:verified',async(_event,itemId)=>{
+    if(!session)throw Error('Sign in first');
+    if(!/^[a-f0-9-]{32,36}$/i.test(String(itemId)))throw Error('Invalid item ID');
+    const cacheKey=session.serverId+':'+itemId;
+    const hit=canonicalPosters.get(cacheKey);
+    if(hit && Date.now()<hit.until)return hit.value;
+    const item=await request(session.server,`/Users/${session.user.Id}/Items/${itemId}`,session.token);
+    if(!['Movie','Series'].includes(item?.Type))return null;
+    const norm=t=>String(t||'').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');
+    const year=Number(item.ProductionYear)||0;
+    let candidates=[];
+    if(item.Type==='Series'){
+      const tvdb=String(item.ProviderIds?.Tvdb||item.ProviderIds?.TheTvdb||'');
+      let show=null, idMatched=false;
+      if(/^\d{1,10}$/.test(tvdb)){
+        show=await externalJSON('https://api.tvmaze.com/lookup/shows?thetvdb='+encodeURIComponent(tvdb)).catch(()=>null);
+        idMatched=!!show?.id;
+      }
+      if(!show){
+        const search=await externalJSON('https://api.tvmaze.com/search/shows?q='+encodeURIComponent(String(item.Name).slice(0,120))).catch(()=>[]);
+        const exact=Array.isArray(search)?search.map(x=>x?.show).filter(x=>x?.id&&norm(x.name)===norm(item.Name)):[];
+        const matching=year?exact.filter(x=>{const y=Number(String(x.premiered||'').slice(0,4));return !y||Math.abs(y-year)<=1}):exact;
+        if(matching.length===1)show=matching[0];
+      }
+      if(show?.id && (idMatched||norm(show.name)===norm(item.Name))){
+        const poster=show.image?.original||show.image?.medium;
+        if(poster)candidates.push({url:poster,provider:'TVmaze · '+show.name});
+      }
+    }
+    // Jellyfin's provider list is tied to this item ID. Prefer sources with
+    // portrait aspect ratios and known image-provider CDN origins.
+    const remote=await request(session.server,`/Items/${itemId}/RemoteImages?type=Primary&limit=20`,session.token).catch(()=>({}));
+    const images=(remote.Images||[]).filter(x=>x.Type==='Primary'&&allowedPosterUrl(x.Url) && (!x.Width||!x.Height||x.Height/x.Width>1.25));
+    images.sort((a,b)=>{
+      const score=x=>/themoviedb|tmdb/i.test(x.ProviderName||'')?100:/tvdb|fanart/i.test(x.ProviderName||'')?50:0;
+      return score(b)-score(a);
+    });
+    for(const img of images.slice(0,3))candidates.push({url:img.Url,provider:img.ProviderName||'Jellyfin provider'});
+    let output=null;
+    for(const entry of candidates.slice(0,4)){
+      if(!allowedPosterUrl(entry.url))continue;
+      try{
+        const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),5500);
+        try{
+          const resp=await net.fetch(entry.url,{headers:{Accept:'image/jpeg,image/png,image/webp'},redirect:'error',signal:controller.signal});
+          if(!resp.ok)continue;
+          const mime=(resp.headers.get('content-type')||'').split(';')[0].trim().toLowerCase();
+          if(!['image/jpeg','image/png','image/webp'].includes(mime))continue;
+          if(Number(resp.headers.get('content-length')||0)>4_000_000)continue;
+          const bytes=Buffer.from(await resp.arrayBuffer());
+          if(bytes.length>4_000_000)continue;
+          output={image:`data:${mime};base64,${bytes.toString('base64')}`,provider:entry.provider};break;
+        }finally{clearTimeout(timeout)}
+      }catch{}
+    }
+    if(canonicalPosters.size>500)canonicalPosters.clear();
+    canonicalPosters.set(cacheKey,{value:output,until:Date.now()+(output?6:1)*3600000});
+    return output;
+  });
+  ipcMain.handle('metadata:tvmaze', async (_event, data={})=>{
+    if (!session) throw Error('Sign in to use metadata lookup');
+    const name=String(data.name||'').trim().slice(0,120);
+    const year=Number(data.year)||0;
+    const tvdb=String(data.providers?.Tvdb||data.providers?.TheTvdb||'').trim();
+    if (!name || !/^[\p{L}\p{N} .,:!?()_&+\-']{1,120}$/u.test(name)) throw Error('Invalid show name');
+    const key = `${name.toLowerCase()}:${year}:${tvdb}`;
+    const cache=tvmazeCache.get(key);
+    if(cache && cache.expires>Date.now()) return cache.data;
+    let show=null;let matchedById=false;
+    if (/^\d{1,10}$/.test(tvdb)) {show=await externalJSON('https://api.tvmaze.com/lookup/shows?thetvdb='+encodeURIComponent(tvdb)).catch(()=>null);matchedById=!!show?.id;}
+    if (!show) show=await externalJSON('https://api.tvmaze.com/singlesearch/shows?q='+encodeURIComponent(name));
+    const norm=str=>String(str||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+    const same=norm(show?.name)===norm(name);
+    const premiered=Number(String(show?.premiered||'').slice(0,4));
+    // Never auto-attach an episode list when the show match looks dubious.
+    if (!show?.id || (!same && !matchedById) || (year && premiered && Math.abs(year-premiered)>2 && !matchedById)) {
+      const missing={episodes:[],matched:false};tvmazeCache.set(key,{data:missing,expires:Date.now()+3600000});return missing;
+    }
+    const episodes=await externalJSON(`https://api.tvmaze.com/shows/${Number(show.id)}/episodes?specials=1`);
+    const result={matched:true,show:String(show.name).slice(0,120),source:'TVmaze',episodes:(Array.isArray(episodes)?episodes:[]).filter(ep=>Number.isInteger(ep.season)&&Number.isInteger(ep.number)&&ep.name).slice(0,1500).map(ep=>({season:ep.season,number:ep.number,name:String(ep.name).slice(0,180)}))};
+    tvmazeCache.set(key,{data:result,expires:Date.now()+24*3600000});return result;
+  });
+  ipcMain.handle('profile:avatar-get',async()=>{
+    if(!session)throw Error('Not signed in');
+    const id=String(session.user.Id);
+    const url=new URL(`${session.server}/Users/${id}/Images/Primary?maxWidth=320`);
+    const response=await net.fetch(url.toString(),{headers:{Authorization:authHeader(session.token)},redirect:'error'});
+    if(!response.ok) return null;
+    const mimetype=response.headers.get('content-type')||'';
+    if(!/^image\/(?:png|jpeg|webp)/i.test(mimetype))return null;
+    const raw=Buffer.from(await response.arrayBuffer());if(raw.byteLength>1000000)return null;
+    return `data:${mimetype.split(';')[0]};base64,${raw.toString('base64')}`;
+  });
+  ipcMain.handle('profile:avatar-upload',async(_event,dataUrl)=>{
+    if(!session)throw Error('Not signed in');
+    if(typeof dataUrl!=='string'||!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(dataUrl)||dataUrl.length>800000)throw Error('Invalid JPG portrait');
+    const buffer=Buffer.from(dataUrl.split(',')[1],'base64');
+    if(buffer.length>520000)throw Error('Profile image too large');
+    const url=new URL(`${session.server}/Users/${session.user.Id}/Images/Primary`);
+    const result=await net.fetch(url.toString(),{method:'POST',headers:{'Authorization':authHeader(session.token),'Content-Type':'image/jpeg'},body:buffer,redirect:'error'});
+    if(!result.ok){const detail=String(await result.text()).slice(0,160);throw Error(`Jellyfin ${result.status}: ${detail||'insufficient permission'}`)}
+    return true;
   });
   ipcMain.handle('updates:status', () => updateStatus);
   ipcMain.handle('updates:check', async () => { if (!updaterReady) return updateStatus; try { await autoUpdater.checkForUpdates(); } catch (e) { sendUpdate('error', String(e.message || e)); } return updateStatus; });

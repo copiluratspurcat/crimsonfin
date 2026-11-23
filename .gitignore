@@ -3,3 +3,10 @@ dist/
 release/
 *.log
 .env
+
+# Server-only secrets and runtime data
+server/.env
+server/*.sqlite*
+server/__pycache__/
+server/tests/__pycache__/
+server/.pytest_cache/
