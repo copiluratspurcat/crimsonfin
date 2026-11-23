@@ -1,0 +1,44 @@
+:root[data-theme='midnight'] {
+  --cf-bg:#080e1d; --cf-panel:#111a30; --cf-panel-raised:#1c2947;
+  --cf-accent:#629cff; --cf-accent-soft:#a5c6ff; --cf-outline:#354d78;
+  --cf-muted:#a9b8d1; --cf-primary:#285fcc; --cf-glow:#233f7c;
+}
+:root[data-theme='forest'] {
+  --cf-bg:#07130f; --cf-panel:#102219; --cf-panel-raised:#1b3327;
+  --cf-accent:#58ca98; --cf-accent-soft:#9ee6c4; --cf-outline:#335b49;
+  --cf-muted:#a2c1b1; --cf-primary:#1a674a; --cf-glow:#184638;
+}
+:root[data-theme='violet'] {
+  --cf-bg:#100b1b; --cf-panel:#1d142d; --cf-panel-raised:#2e2043;
+  --cf-accent:#bd88ff; --cf-accent-soft:#ddbdff; --cf-outline:#5c427d;
+  --cf-muted:#c1aed5; --cf-primary:#6c38aa; --cf-glow:#422960;
+}
+.theme-settings select {
+  min-width: 180px; padding: 10px 14px; color: inherit;
+  background: var(--cf-panel); border: 1px solid var(--cf-outline); border-radius: 9px;
+}
+
+:root[data-theme]:not([data-theme='crimson']) :is(.app,.login-page,.boot,.player-page) {
+  background: radial-gradient(ellipse at 72% -15%,var(--cf-glow),transparent 52%),var(--cf-bg);
+}
+:root[data-theme]:not([data-theme='crimson']) :is(.sidebar,.topbar,.setting-card,.panel,.stat,.details-panel,.login-card,.player-dock,.player-top,.player-exit-dialog,.player-control-grid,.review-row,.request-row,.poster-cover,.segmented) {
+  background: var(--cf-panel); border-color: var(--cf-outline); color: inherit;
+}
+:root[data-theme]:not([data-theme='crimson']) :is(.nav-link.active,.nav-link:hover,.btn-ghost,.player-back,.player-settings-button,.player-fullscreen,.player-transport button,.player-sync-inputs button,.segmented button.selected,.player-field select,.player-message,.user-avatar,.header-avatar) {
+  background: var(--cf-panel-raised); border-color: var(--cf-outline); color: var(--cf-accent-soft);
+}
+:root[data-theme]:not([data-theme='crimson']) :is(.btn-primary,.logo-mark,.player-transport .player-playbutton) {
+  background: var(--cf-primary); color:white; border-color:var(--cf-accent);
+  box-shadow:0 6px 20px var(--cf-glow);
+}
+:root[data-theme]:not([data-theme='crimson']) :is(.eyebrow,.player-eyebrow,.player-field > span,.player-sync-top > span,.player-sync-top strong,.player-badge) {
+  color: var(--cf-accent-soft);
+}
+:root[data-theme]:not([data-theme='crimson']) :is(.muted,.player-current-mode,.player-sync-control small) { color: var(--cf-muted); }
+:root[data-theme]:not([data-theme='crimson']) :is(.update-progress > i,.player-live,.progress > span) {
+  background: var(--cf-accent); box-shadow:none;
+}
+:root[data-theme]:not([data-theme='crimson']) :focus-visible,
+:root[data-theme]:not([data-theme='crimson']).crimsonfin-tv :is(button,a,input,select,textarea,[tabindex]):focus {
+  outline-color: var(--cf-accent-soft);
+}

@@ -8,6 +8,8 @@ import { ArrowLeft, ArrowRight, Check, ChevronDown, DownloadCloud, RefreshCw, Cl
 import './styles.css';
 import { enableTvNavigation } from './tv';
 import './tv.css';
+import { initTheme, ThemePicker } from './theme';
+import './themes.css';
 
 type Account = { id: string; name: string; isAdmin: boolean };
 type Item = { ImageTags?: { Primary?: string; Thumb?: string }; Id: string; Name: string; Type: string; Overview?: string; ProductionYear?: number; CommunityRating?: number; RunTimeTicks?: number; Genres?: string[]; UserData?: { IsFavorite?: boolean; PlaybackPositionTicks?: number; PlayedPercentage?: number; Played?: boolean }; IndexNumber?: number; ParentIndexNumber?: number; SeriesName?: string; MediaSources?: { Container?: string; MediaStreams?: { Codec?: string; Type?: string; DisplayTitle?: string }[] }[] };
@@ -98,7 +100,7 @@ function App() {
       {tab === 'requests' && <MediaRequests user={user} onShowDownloads={() => setTab('downloads')} />}
       {tab === 'downloads' && user.isAdmin && <DownloadsPanel />}
       {tab === 'admin' && user.isAdmin && <Admin />}
-      {tab === 'settings' && <section className="content-section"><div className="heading"><p className="eyebrow">YOUR EXPERIENCE</p><h1>Settings</h1><p>Manage your account and connection.</p></div><div className="setting-card"><div><h3>Account</h3><p>Signed in as <strong>{user.name}</strong>. Your history and favorites belong to this Jellyfin user.</p></div><button className="btn btn-ghost" onClick={() => logout.mutate()}><LogOut size={16}/> Sign out</button></div><div className="setting-card"><div><h3>Connection</h3><p>Connection type: <strong>{connectionLabel}</strong></p><small className="muted">Your server address is intentionally hidden from this interface.</small></div><button className="btn btn-ghost" onClick={() => qc.invalidateQueries()}><ArrowRight size={16}/> Refresh data</button></div><UpdatePanel/><div className="setting-card"><div><h3>Motion & accessibility</h3><p>Animations honor your system's reduced motion setting.</p></div><span className="mini-label">SYSTEM CONTROLLED</span></div></section>}
+      {tab === 'settings' && <section className="content-section"><div className="heading"><p className="eyebrow">YOUR EXPERIENCE</p><h1>Settings</h1><p>Manage your account and connection.</p></div><div className="setting-card"><div><h3>Account</h3><p>Signed in as <strong>{user.name}</strong>. Your history and favorites belong to this Jellyfin user.</p></div><button className="btn btn-ghost" onClick={() => logout.mutate()}><LogOut size={16}/> Sign out</button></div><div className="setting-card"><div><h3>Connection</h3><p>Connection type: <strong>{connectionLabel}</strong></p><small className="muted">Your server address is intentionally hidden from this interface.</small></div><button className="btn btn-ghost" onClick={() => qc.invalidateQueries()}><ArrowRight size={16}/> Refresh data</button></div><ThemePicker/><UpdatePanel/><div className="setting-card"><div><h3>Motion & accessibility</h3><p>Animations honor your system's reduced motion setting.</p></div><span className="mini-label">SYSTEM CONTROLLED</span></div></section>}
       <footer className="footer">CRIMSONFIN · CONNECTED TO YOUR JELLYFIN SERVER</footer>
     </main>
     {selected && <Details key={selected.Id} item={selected} onClose={() => setSelected(null)} onPlay={play} onMutation={() => qc.invalidateQueries()} />}
@@ -353,5 +355,6 @@ function FileListConfiguration() {
   </div>;
 }
 
+initTheme();
 enableTvNavigation();
 createRoot(document.getElementById('root')!).render(<QueryClientProvider client={q}><App /></QueryClientProvider>);
