@@ -6,6 +6,8 @@ import { DownloadsPanel } from './downloads';
 import { UpdatePanel } from './updates';
 import { ArrowLeft, ArrowRight, Check, ChevronDown, DownloadCloud, RefreshCw, Clapperboard, Clock3, Film, Heart, Home, LogOut, Maximize, Menu, MonitorPlay, Pause, Play, Plus, Search, Send, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, Tv2, Volume2, X } from 'lucide-react';
 import './styles.css';
+import { enableTvNavigation } from './tv';
+import './tv.css';
 
 type Account = { id: string; name: string; isAdmin: boolean };
 type Item = { ImageTags?: { Primary?: string; Thumb?: string }; Id: string; Name: string; Type: string; Overview?: string; ProductionYear?: number; CommunityRating?: number; RunTimeTicks?: number; Genres?: string[]; UserData?: { IsFavorite?: boolean; PlaybackPositionTicks?: number; PlayedPercentage?: number; Played?: boolean }; IndexNumber?: number; ParentIndexNumber?: number; SeriesName?: string; MediaSources?: { Container?: string; MediaStreams?: { Codec?: string; Type?: string; DisplayTitle?: string }[] }[] };
@@ -351,4 +353,5 @@ function FileListConfiguration() {
   </div>;
 }
 
+enableTvNavigation();
 createRoot(document.getElementById('root')!).render(<QueryClientProvider client={q}><App /></QueryClientProvider>);

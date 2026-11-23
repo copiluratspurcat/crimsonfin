@@ -1,0 +1,22 @@
+import groovy.json.JsonSlurper
+
+plugins {
+    id 'com.android.application' version '8.9.3'
+}
+
+def gateway = new JsonSlurper().parse(file('../../desktop/release-target.json')).url
+android {
+    namespace 'app.crimsonfin.tv'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'app.crimsonfin.tv'
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+        buildConfigField 'String', 'GATEWAY_URL', '"' + gateway + '"'
+    }
+
+    buildFeatures { buildConfig true }
+}

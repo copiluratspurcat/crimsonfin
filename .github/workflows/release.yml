@@ -69,8 +69,12 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  android-tv:
+    needs: validate
+    uses: ./.github/workflows/android-tv.yml
+
   release:
-    needs: build
+    needs: [build, android-tv]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -86,6 +90,7 @@ jobs:
         run: |
           find release-assets -maxdepth 1 -name '*.exe' | grep -q .
           find release-assets -maxdepth 1 -name '*.deb' | grep -q .
+          test -s release-assets/CrimsonFin-TV-preview.apk
       - name: Determine stable version tag
         id: meta
         shell: bash
@@ -107,6 +112,7 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
+            release-assets/*.apk
             release-assets/*.exe
             release-assets/*.deb
             release-assets/*.AppImage
