@@ -14,7 +14,7 @@ const names:Record<string,string>={
  idle:'Automatic updates enabled',checking:'Checking for updates…',
  current:'You have the latest version',downloading:'Downloading update…',
  downloaded:'Update ready to install',manual:'Update available',
- error:'Update check failed'
+ error:'Automatic update failed'
 };
 export function UpdatePanel(){
  const bridge=window.crimsonfinUpdates;
@@ -43,6 +43,9 @@ export function UpdatePanel(){
    <button className="btn btn-ghost" disabled={busy||state?.state==='downloading'||state?.state==='checking'} onClick={async()=>{
      setBusy(true);try{const s=await bridge.check();if(s)setState(s)}finally{setBusy(false)}
    }}><RefreshCw size={15}/> Check now</button>
+   {(state?.state==='error'||state?.state==='manual')&&<a className="btn btn-ghost"
+     href="https://github.com/copiluratspurcat/crimsonfin/releases/latest" target="_blank" rel="noreferrer">
+     <DownloadCloud size={15}/> View official download</a>}
    {state?.state==='downloaded'&&<button className="btn btn-primary" onClick={()=>bridge.install()}>
      <CheckCircle2 size={15}/> Restart & install</button>}
  </div></div>

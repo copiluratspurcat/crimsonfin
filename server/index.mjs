@@ -13,6 +13,8 @@ import { createFilelistService } from './filelist-service.mjs';
 import { createDownloadManager } from './download-manager.mjs';
 import { initRequestJobs, createRequestFulfillment } from './request-fulfillment.mjs';
 
+import { createSubtitleSync } from './subtitle-sync.mjs';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_JSON = 16 * 1024;
 const MEDIA_ID = /^[a-f\d-]{32,36}$/i;
@@ -171,6 +173,7 @@ export function createAppServer(options = {}) {
   const downloadManager = createDownloadManager({ env, fetchImpl });
   const filelist = createFilelistService({ env, db, crypto: crypt, downloadManager, fetchImpl });
   const requestsFlow = createRequestFulfillment({ db, filelist, downloadManager });
+  const subtitleSync = createSubtitleSync(env);
   let lastDownloadSync = 0;
 
   async function jellyfin(relative, session, init = {}) {
@@ -321,6 +324,21 @@ export function createAppServer(options = {}) {
           const term = String(url.searchParams.get('q') || '').trim().slice(0, 100);
           if (term.length < 2) return json(res, 200, { Items: [], TotalRecordCount: 0 });
           return json(res, 200, await jellyfin(`/Users/${user.userId}/Items?${new URLSearchParams({ Recursive: 'true', IncludeItemTypes: 'Movie,Series', SearchTerm: term, Limit: '75' })}`, user));
+        }
+        const sync = pathname.match(/^\/api\/subtitle-sync\/([a-f\d-]{32,36})\/([a-f\d-]{32,36})\/(\d{1,3})\/(\d{1,3})$/i);
+        if (sync && req.method === 'GET') {
+          if (!env.SUBTITLE_SYNC_COMMAND) return res.writeHead(204, { 'cache-control': 'no-store' }).end();
+          const [, itemId, sourceId, subtitleIndex, audioIndex] = sync;
+          const details = await jellyfin(`/Users/${user.userId}/Items/${itemId}?Fields=MediaSources,Path`, user);
+          const source = details.MediaSources?.find(source => source.Id === sourceId);
+          const result = await subtitleSync(source, Number(subtitleIndex), Number(audioIndex), () =>
+            fetchImpl(`${jellyfinBase}/Videos/${itemId}/${sourceId}/Subtitles/${subtitleIndex}/Stream.vtt`, {
+              headers: { authorization: authHeader(user.deviceId, user.token) },
+              redirect: 'manual', signal: AbortSignal.timeout(20000)
+            }));
+          return res.writeHead(result.status, {
+            'cache-control': 'no-store', 'content-type': 'text/vtt; charset=utf-8'
+          }).end(result.captions);
         }
         const item = pathname.match(/^\/api\/items\/([\w-]+)$/);
         if (item && req.method === 'GET') return json(res, 200,

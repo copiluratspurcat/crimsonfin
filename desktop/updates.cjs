@@ -12,7 +12,13 @@ function startAutoUpdates({ app, win, ipcMain, dialog, shell }) {
   if (!app.isPackaged || started) return;
   started = true;
   const linuxDeb = process.platform === 'linux' && !process.env.APPIMAGE;
+  autoUpdater.setFeedURL({
+    provider: 'generic',
+    url: 'https://github.com/copiluratspurcat/crimsonfin/releases/latest/download/'
+  });
   autoUpdater.allowPrerelease = false;
+  autoUpdater.allowDowngrade = false;
+  autoUpdater.disableDifferentialDownload = true;
   autoUpdater.autoDownload = !linuxDeb;
   autoUpdater.autoInstallOnAppQuit = !linuxDeb;
   const publish = patch => {
@@ -22,14 +28,24 @@ function startAutoUpdates({ app, win, ipcMain, dialog, shell }) {
     }
   };
   let checking = false;
+  let reportedError;
+  function reportError(error) {
+    if (error === reportedError) return;
+    reportedError = error;
+    const downloading = last.state === 'downloading';
+    const code = /^[A-Z][A-Z0-9_]{1,50}$/.test(error?.code || '') ? ' (' + error.code + ')' : '';
+    publish({ state: 'error', message: (downloading ? 'Update download failed' : 'Could not check for updates') + code + '.' });
+    console.warn('[CrimsonFin updater]', redact(error?.message));
+    if (!win.isDestroyed()) win.setProgressBar(-1);
+  }
   async function check() {
     if (checking || ['downloading', 'downloaded'].includes(last.state)) return last;
     checking = true;
-    publish({ state: 'checking' });
+    reportedError = undefined;
+    publish({ state: 'checking', version: null, percent: 0, message: undefined });
     try { await autoUpdater.checkForUpdates(); }
     catch (error) {
-      publish({ state: 'error', message: 'Could not check for updates.' });
-      console.warn('[CrimsonFin updater]', redact(error?.message));
+      reportError(error);
     }
     finally { checking = false; }
     return last;
@@ -65,11 +81,7 @@ function startAutoUpdates({ app, win, ipcMain, dialog, shell }) {
       if (response === 0) autoUpdater.quitAndInstall(false, true);
     });
   });
-  autoUpdater.on('error', error => {
-    publish({ state: 'error', message: 'Update download failed. Try Check for updates later.' });
-    console.warn('[CrimsonFin updater]', redact(error?.message));
-    if (!win.isDestroyed()) win.setProgressBar(-1);
-  });
+  autoUpdater.on('error', reportError);
   ipcMain.handle('crimsonfin:update:get', event => event.sender.id === win.webContents.id ? last : null);
   ipcMain.handle('crimsonfin:update:check', event => event.sender.id === win.webContents.id ? check() : null);
   ipcMain.handle('crimsonfin:update:install', event => {

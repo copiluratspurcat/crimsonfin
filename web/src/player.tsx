@@ -56,13 +56,15 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
   const [audioChoice, setAudioChoice] = useState('auto');
   const [subtitleChoice, setSubtitleChoice] = useState('auto');
   const [subtitleDelay, setSubtitleDelay] = useState(0);
+  const [autoSync, setAutoSync] = useState(true);
+  const [syncState, setSyncState] = useState<{ url: string; ready: boolean } | null>(null);
   const [showOptions, setShowOptions] = useState(true);
   const [clock, setClock] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playing, setPlaying] = useState(false);
   const resumeRef = useRef(Math.max(0, (item.UserData?.PlaybackPositionTicks || 0) / 10_000_000));
   const resumePlayingRef = useRef(true);
-  const trackBasesRef = useRef(new Map<TextTrackCue, { start: number; end: number }>());
+  const trackBasesRef = useRef(new WeakMap<TextTrackCue, { start: number; end: number }>());
 
   useEffect(() => {
     const abort = new AbortController();
@@ -98,6 +100,37 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
     ? autoSubtitle?.Index.toString() ?? 'off'
     : subtitleChoice;
   const selectedSubtitle = subtitleTracks.find(s => String(s.Index) === activeSubtitle);
+
+  const audioIndex = audioChoice === 'auto'
+    ? audioTracks.find(track => track.Index === source?.DefaultAudioStreamIndex)?.Index ?? audioTracks[0]?.Index
+    : Number(audioChoice);
+  const syncUrl = autoSync && source?.Id && selectedSubtitle && audioIndex !== undefined
+    ? `/api/subtitle-sync/${encodeURIComponent(item.Id)}/${encodeURIComponent(source.Id)}/${selectedSubtitle.Index}/${audioIndex}`
+    : null;
+  const alignedSubtitle = syncState?.url === syncUrl && syncState?.ready;
+
+  useEffect(() => {
+    if (!syncUrl) return;
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    let attempts = 0;
+    async function check() {
+      try {
+        const response = await fetch(syncUrl!, { signal: abort.signal, cache: 'no-store' });
+        await response.body?.cancel();
+        if (abort.signal.aborted) return;
+        if (response.status === 200) setSyncState({ url: syncUrl!, ready: true });
+        else if (response.status === 202 && ++attempts < 24) {
+          setSyncState({ url: syncUrl!, ready: false });
+          timer = setTimeout(check, 10000);
+        } else setSyncState(null);
+      } catch {
+        if (!abort.signal.aborted) setSyncState(null);
+      }
+    }
+    void check();
+    return () => { abort.abort(); clearTimeout(timer); };
+  }, [syncUrl]);
 
   function savePosition() {
     const v = videoRef.current;
@@ -286,11 +319,7 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
     const timer = setInterval(adjust, 750);
     adjust();
     return () => clearInterval(timer);
-  }, [activeSubtitle, selectedSubtitle?.Index, subtitleDelay, source?.Id]);
-
-  useEffect(() => {
-    trackBasesRef.current.clear();
-  }, [source?.Id]);
+  }, [activeSubtitle, selectedSubtitle?.Index, subtitleDelay, source?.Id, alignedSubtitle]);
 
   useEffect(() => {
     const keydown = (e: KeyboardEvent) => {
@@ -331,10 +360,11 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
     <div className={fullscreen ? 'player-screen is-fullscreen' : 'player-screen'} ref={screenRef}>
       <video ref={videoRef} controls controlsList="nofullscreen" playsInline preload="metadata">
         {mediaId && subtitleTracks.map(stream => (
-          <track key={stream.Index} kind="subtitles"
+          <track key={`${stream.Index}-${stream.Index === selectedSubtitle?.Index && alignedSubtitle ? syncUrl : 'original'}`} kind="subtitles"
             srcLang={stream.Language || 'und'}
             label={`${stream.DisplayTitle || languageLabel(stream.Language)} · ${stream.Index}`}
-            src={`/jellyfin/Videos/${encodeURIComponent(item.Id)}/${encodeURIComponent(mediaId)}/Subtitles/${stream.Index}/Stream.vtt`}/>
+            src={stream.Index === selectedSubtitle?.Index && alignedSubtitle && syncUrl
+              ? syncUrl : `/jellyfin/Videos/${encodeURIComponent(item.Id)}/${encodeURIComponent(mediaId)}/Subtitles/${stream.Index}/Stream.vtt`}/>
         ))}
       </video>
       <button className="player-fullscreen" title={fullscreenLabel}
@@ -402,6 +432,11 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
 
         <div className="player-sync-control">
           <div className="player-sync-top"><span><Captions size={14}/> SUBTITLE TIMING OFFSET</span><strong>{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(2)}s</strong></div>
+          <label><input type="checkbox" checked={autoSync}
+            onChange={e => { setAutoSync(e.target.checked); setSyncState(null); }}/> Auto-sync to dialogue</label>
+          {syncState && syncState.url === syncUrl && <small role="status">
+            {alignedSubtitle ? 'Timing adjusted to the selected audio.' : 'Analyzing dialogue timing…'}
+          </small>}
           <div className="player-sync-inputs">
             <button onClick={() => delayBy(-0.5)} title="Show captions 0.5 seconds earlier">− 0.5s</button>
             <input type="range" min={-10} max={10} step={0.25} value={subtitleDelay}

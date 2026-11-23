@@ -342,3 +342,13 @@ S03 listing from silently queuing S04 files.
 All torrent downloads remain server-side, restricted to administrators,
 and use the existing Jellyfin Movies/Shows folders and available-disk-space
 selection. The FileList API credentials are never forwarded to clients.
+
+## Automatic subtitle timing
+
+Set `SUBTITLE_SYNC_COMMAND` in the gateway's `.env` to the absolute path of
+an installed `ffsubsync` executable, with `ffmpeg` on the service PATH. The
+gateway user needs read access to the media files under the configured Jellyfin
+movie and series directories. The player uses the selected audio track and
+keeps the original text subtitles visible while the server analyzes timing.
+Alignment is best-effort. Turn off **Auto-sync to dialogue** or use the manual
+offset under **Tracks & sync** if a track still needs adjustment.
