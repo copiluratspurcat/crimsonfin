@@ -11,3 +11,13 @@ contextBridge.exposeInMainWorld('crimsonfinUpdates', Object.freeze({
     return () => ipcRenderer.removeListener('crimsonfin:update', listener);
   }
 }));
+
+contextBridge.exposeInMainWorld('crimsonfinFullscreen', Object.freeze({
+  set: enabled => ipcRenderer.invoke('crimsonfin:fullscreen:set', enabled),
+  onExit: callback => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = () => callback();
+    ipcRenderer.on('crimsonfin:fullscreen:exit', listener);
+    return () => ipcRenderer.removeListener('crimsonfin:fullscreen:exit', listener);
+  }
+}));

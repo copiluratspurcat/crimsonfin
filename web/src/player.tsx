@@ -34,6 +34,15 @@ const formatTime = (s: number) => {
 };
 function isSubtitleUsable(s: StreamInfo) { return s.Type === 'Subtitle' && TEXT_SUBS.has((s.Codec || '').toLowerCase()); }
 
+declare global {
+  interface Window {
+    crimsonfinFullscreen?: {
+      set: (enabled: boolean) => Promise<void>;
+      onExit: (callback: () => void) => () => void;
+    };
+  }
+}
+
 export function Player({ item, onClose }: { item: PlayerItem; onClose: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const screenRef = useRef<HTMLDivElement>(null);
@@ -42,7 +51,7 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
-  const [fullscreenError, setFullscreenError] = useState('');
+  const windowFullscreenRef = useRef(false);
   const [quality, setQuality] = useState(12_000_000);
   const [audioChoice, setAudioChoice] = useState('auto');
   const [subtitleChoice, setSubtitleChoice] = useState('auto');
@@ -116,22 +125,41 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
   const toggleFullscreen = useCallback(async () => {
     const screen = screenRef.current;
     if (!screen) return;
-    setFullscreenError('');
-    try {
-      if (document.fullscreenElement === screen) await document.exitFullscreen();
-      else await screen.requestFullscreen();
-    } catch {
-      setFullscreenError('Could not switch fullscreen mode.');
+    if (document.fullscreenElement === screen) {
+      await document.exitFullscreen();
+      return;
     }
+
+    const desktop = window.crimsonfinFullscreen;
+    if (!windowFullscreenRef.current && !desktop && !/Electron\//i.test(navigator.userAgent)) {
+      try {
+        await screen.requestFullscreen();
+        return;
+      } catch {
+        // A browser embedding policy can block native fullscreen.
+      }
+    }
+    const enabled = !windowFullscreenRef.current;
+    windowFullscreenRef.current = enabled;
+    setFullscreen(enabled);
+    await desktop?.set(enabled).catch(() => {});
   }, []);
 
   useEffect(() => {
     const onFullscreenChange = () => {
-      setFullscreen(document.fullscreenElement === screenRef.current);
-      setFullscreenError('');
+      setFullscreen(windowFullscreenRef.current || document.fullscreenElement === screenRef.current);
     };
+    const desktop = window.crimsonfinFullscreen;
+    const unsubscribe = desktop?.onExit(() => {
+      windowFullscreenRef.current = false;
+      setFullscreen(false);
+    });
     document.addEventListener('fullscreenchange', onFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+      unsubscribe?.();
+      if (windowFullscreenRef.current) void desktop?.set(false).catch(() => {});
+    };
   }, []);
 
   useEffect(() => {
@@ -270,7 +298,7 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
       if (e.key === 'Escape') {
         if (e.repeat) { e.preventDefault(); return; }
         if (e.defaultPrevented) return;
-        if (document.fullscreenElement === screenRef.current) {
+        if (windowFullscreenRef.current || document.fullscreenElement === screenRef.current) {
           e.preventDefault();
           void toggleFullscreen();
           return;
@@ -300,8 +328,8 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
       <button className="player-settings-button" title="Toggle player settings" onClick={() => setShowOptions(s => !s)}><Settings2 size={18}/> Audio & subtitles <ChevronDown size={14}/></button>
     </header>
 
-    <div className="player-screen" ref={screenRef}>
-      <video ref={videoRef} controls controlsList={document.fullscreenEnabled ? 'nofullscreen' : undefined} playsInline preload="metadata">
+    <div className={fullscreen ? 'player-screen is-fullscreen' : 'player-screen'} ref={screenRef}>
+      <video ref={videoRef} controls controlsList="nofullscreen" playsInline preload="metadata">
         {mediaId && subtitleTracks.map(stream => (
           <track key={stream.Index} kind="subtitles"
             srcLang={stream.Language || 'und'}
@@ -309,12 +337,12 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
             src={`/jellyfin/Videos/${encodeURIComponent(item.Id)}/${encodeURIComponent(mediaId)}/Subtitles/${stream.Index}/Stream.vtt`}/>
         ))}
       </video>
-      {document.fullscreenEnabled && <button className="player-fullscreen" title={fullscreenLabel}
+      <button className="player-fullscreen" title={fullscreenLabel}
         aria-label={fullscreenLabel} onClick={toggleFullscreen}>
         {fullscreen ? <Minimize size={19}/> : <Maximize size={19}/>}
-      </button>}
-      {(fullscreenError || status) && <div className="player-message" role="status">
-        <Clapperboard size={21}/><span>{fullscreenError || status}</span>
+      </button>
+      {status && <div className="player-message" role="status">
+        <Clapperboard size={21}/><span>{status}</span>
       </div>}
     </div>
 

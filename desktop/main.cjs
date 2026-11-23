@@ -42,6 +42,15 @@ app.on('certificate-error', (event, webContents, url, error, certificate, callba
   } catch {}
 });
 
+ipcMain.handle('crimsonfin:fullscreen:set', (event, enabled) => {
+  const frame = event.senderFrame;
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || !frame || frame !== event.sender.mainFrame || typeof enabled !== 'boolean') return;
+  const origin = new URL(frame.url).origin;
+  if (origin !== remote && origin !== approvedLocalOrigin) return;
+  win.setFullScreen(enabled);
+});
+
 function unavailable(win) {
   win.loadURL('data:text/html,' + encodeURIComponent(
     '<body style="font:16px system-ui;background:#0b1019;color:white;padding:3rem"><h2>CrimsonFin is unavailable</h2><p>Check your server connection and try reopening the app.</p></body>'
@@ -58,6 +67,7 @@ async function makeWindow() {
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.cjs'), partition: 'persist:crimsonfin' }
   });
   win.once('ready-to-show', () => win.show());
+  win.on('leave-full-screen', () => win.webContents.send('crimsonfin:fullscreen:exit'));
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) shell.openExternal(url);
     return { action: 'deny' };
