@@ -418,3 +418,36 @@ input[type="range"] { accent-color:var(--cf-accent); }
  color:#fff0f4;border-radius:10px;padding:11px 12px;margin-top:7px;font-size:12px;letter-spacing:0;}
 .show-downloads {margin-top:16px;}
 @media(max-width:740px){.download-details{grid-template-columns:repeat(2,minmax(0,1fr));}.drive-free{font-size:25px;}}
+
+/* Approved requests are now actionable and track the automatic queue. */
+.review-request{border-bottom:1px solid #49303e;padding:14px 0;}
+.review-request:last-child{border-bottom:none;}
+.review-request .review-row{border:0;padding:4px 0;}
+.review-row select{min-width:115px;}
+.approval-progress{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-top:12px;}
+.request-progress-tag{border:1px solid #6c3950;background:#39182a;color:#f9b2c5;
+ border-radius:99px;padding:7px 11px;font-size:11px;font-weight:750;}
+.request-progress-queued,.request-progress-downloading{background:#132e30;color:#9ce6cc;border-color:#315b5a;}
+.request-progress-completed{background:#17302a;color:#9ce4b5;border-color:#31684b;}
+.request-progress-needs_review,.request-progress-failed{background:#382311;color:#f1c89a;border-color:#68452e;}
+.request-release-name{font-size:11px;color:#bd9cad;max-width:270px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.request-detail{color:#d4a8b8;font-size:12px;max-width:420px;line-height:1.5;}
+.approval-progress .btn{font-size:11px;padding:9px 12px;}
+.request-type-fix{display:flex;align-items:center;gap:8px;font-size:9px;color:#caaab8;font-weight:800;}
+.request-type-fix select{border:1px solid #71354e;background:#25121e;color:#ffebf0;
+ border-radius:8px;padding:7px 9px;}
+.approval-releases{background:#190f18;border:1px solid #6c344c;border-radius:12px;padding:16px;margin:14px 0;}
+.approval-releases>strong{color:#fff;font-size:14px;display:block;margin-bottom:13px;}
+.approval-release{padding:12px 0;display:flex;align-items:center;justify-content:space-between;gap:16px;border-top:1px solid #482638;}
+.approval-release>div{min-width:0;flex:1;}
+.approval-release strong{display:block;font-size:12px;color:#fceaf0;overflow-wrap:anywhere;}
+.approval-release small{display:block;color:#ac899b;margin-top:6px;}
+.approval-release .queue-download{flex:none;padding:10px 13px;}
+.request-state-sub{font-size:10px;max-width:260px;color:#f0a8be;text-align:right;line-height:1.4;}
+.app-update-card h3{display:flex;align-items:center;gap:9px;}
+.app-update-card h3 svg{color:#ff4779;}
+.update-actions{display:flex;gap:10px;flex-wrap:wrap;}
+.update-actions button{white-space:nowrap;}
+.update-progress{height:8px;background:#482339;overflow:hidden;border-radius:999px;margin:13px 0;}
+.update-progress>i{display:block;height:100%;background:linear-gradient(90deg,#db205c,#ff5b84);border-radius:inherit;transition:width .3s ease;}
+@media(max-width:740px){.approval-progress{align-items:flex-start}.approval-release{flex-direction:column;align-items:flex-start}.request-state-sub{max-width:140px;}}

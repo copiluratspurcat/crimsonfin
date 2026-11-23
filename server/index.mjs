@@ -11,6 +11,7 @@ import { validateFilelistRssUrl, parseFilelistRss } from './filelist-rss.mjs';
 import { createLanDiscovery } from './local-discovery.mjs';
 import { createFilelistService } from './filelist-service.mjs';
 import { createDownloadManager } from './download-manager.mjs';
+import { initRequestJobs, createRequestFulfillment } from './request-fulfillment.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_JSON = 16 * 1024;
@@ -161,6 +162,7 @@ export function createAppServer(options = {}) {
   if (dbPath !== ':memory:') mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(dbPath);
   initDb(db);
+  initRequestJobs(db);
   db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
   const limiter = new Map();
   const cache = new Map();
@@ -168,6 +170,8 @@ export function createAppServer(options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   const downloadManager = createDownloadManager({ env, fetchImpl });
   const filelist = createFilelistService({ env, db, crypto: crypt, downloadManager, fetchImpl });
+  const requestsFlow = createRequestFulfillment({ db, filelist, downloadManager });
+  let lastDownloadSync = 0;
 
   async function jellyfin(relative, session, init = {}) {
     const headers = { accept: 'application/json', authorization: authHeader(session.deviceId, session.token), ...init.headers };
@@ -350,10 +354,11 @@ export function createAppServer(options = {}) {
           return json(res, 200, { ok: true });
         }
         if (pathname === '/api/requests' && req.method === 'GET') {
-          const rows = user.isAdmin
-            ? db.prepare('SELECT * FROM requests ORDER BY created_at DESC LIMIT 300').all()
-            : db.prepare('SELECT * FROM requests WHERE user_id = ? ORDER BY created_at DESC LIMIT 200').all(user.userId);
-          return json(res, 200, { requests: rows.map(r => ({ ...r, user_id: undefined })) });
+          if (now - lastDownloadSync > 15_000) {
+            lastDownloadSync = now;
+            await requestsFlow.syncProgress().catch(() => {});
+          }
+          return json(res, 200, { requests: requestsFlow.listRows(user) });
         }
         if (pathname === '/api/requests' && req.method === 'POST') {
           verifyMutation(req);
@@ -375,9 +380,43 @@ export function createAppServer(options = {}) {
           verifyMutation(req); requireAdmin(user);
           const form = await bodyJson(req);
           if (!['approved', 'rejected', 'fulfilled', 'pending'].includes(form.status)) failure('Invalid status');
+          const existing = db.prepare('SELECT * FROM requests WHERE id=?').get(requestManage[1]);
+          if (!existing) failure('Request not found', 404);
+          if (form.kind !== undefined) {
+            if (!['movie','series'].includes(form.kind)) failure('Invalid media type');
+            const job = requestsFlow.get(requestManage[1]);
+            if (job && ['queued','downloading','completed'].includes(job.state)) failure('Cannot reclassify a request that is already downloading', 409);
+            db.prepare('UPDATE requests SET kind=? WHERE id=?').run(form.kind, requestManage[1]);
+            if (form.kind !== existing.kind) requestsFlow.save(requestManage[1],{state:'needs_review',detail:'Media type corrected. Retry release search.'});
+          }
           const update = db.prepare('UPDATE requests SET status = ?, updated_at = ? WHERE id = ?').run(form.status, now, requestManage[1]);
           if (!update.changes) failure('Request not found', 404);
+          if (form.status === 'approved') {
+            // Approval explicitly authorizes trying an exact FileList match.
+            // Ambiguous matches remain queued for admin review, not blind downloads.
+            const outcome = await requestsFlow.process(requestManage[1], user.userId);
+            return json(res, 200, { ok: true, downloadState: outcome.state, detail: outcome.detail });
+          }
           return json(res, 200, { ok: true });
+        }
+        const processApproved = pathname.match(/^\/api\/requests\/([\w-]+)\/process$/);
+        if (processApproved && req.method === 'POST') {
+          verifyMutation(req); requireAdmin(user);
+          const outcome = await requestsFlow.process(processApproved[1], user.userId);
+          return json(res, 200, { state: outcome.state, detail: outcome.detail });
+        }
+        const optionsApproved = pathname.match(/^\/api\/requests\/([\w-]+)\/releases$/);
+        if (optionsApproved && req.method === 'GET') {
+          requireAdmin(user);
+          return json(res, 200, await requestsFlow.options(optionsApproved[1], user.userId));
+        }
+        const selectedApproved = pathname.match(/^\/api\/requests\/([\w-]+)\/queue$/);
+        if (selectedApproved && req.method === 'POST') {
+          verifyMutation(req); requireAdmin(user);
+          const body = await bodyJson(req);
+          if (!/^\d{1,12}$/.test(String(body.releaseId||''))) failure('Invalid FileList release');
+          const outcome = await requestsFlow.select(selectedApproved[1], user.userId, String(body.releaseId));
+          return json(res, 200, { state: outcome.state, detail: outcome.detail });
         }
         if (pathname === '/api/filelist/search' && req.method === 'GET') {
           const query = String(url.searchParams.get('q') || '').trim();

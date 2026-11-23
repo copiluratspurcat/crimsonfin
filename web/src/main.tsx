@@ -3,13 +3,14 @@ import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Player } from './player';
 import { DownloadsPanel } from './downloads';
-import { ArrowLeft, ArrowRight, Check, ChevronDown, DownloadCloud, Clapperboard, Clock3, Film, Heart, Home, LogOut, Maximize, Menu, MonitorPlay, Pause, Play, Plus, Search, Send, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, Tv2, Volume2, X } from 'lucide-react';
+import { UpdatePanel } from './updates';
+import { ArrowLeft, ArrowRight, Check, ChevronDown, DownloadCloud, RefreshCw, Clapperboard, Clock3, Film, Heart, Home, LogOut, Maximize, Menu, MonitorPlay, Pause, Play, Plus, Search, Send, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, Tv2, Volume2, X } from 'lucide-react';
 import './styles.css';
 
 type Account = { id: string; name: string; isAdmin: boolean };
 type Item = { ImageTags?: { Primary?: string; Thumb?: string }; Id: string; Name: string; Type: string; Overview?: string; ProductionYear?: number; CommunityRating?: number; RunTimeTicks?: number; Genres?: string[]; UserData?: { IsFavorite?: boolean; PlaybackPositionTicks?: number; PlayedPercentage?: number; Played?: boolean }; IndexNumber?: number; ParentIndexNumber?: number; SeriesName?: string; MediaSources?: { Container?: string; MediaStreams?: { Codec?: string; Type?: string; DisplayTitle?: string }[] }[] };
 type PageResult = { Items: Item[]; TotalRecordCount: number };
-type RequestEntry = { id: string; user_name: string; title: string; kind: 'movie' | 'series'; year?: number; notes: string; status: 'pending' | 'approved' | 'rejected' | 'fulfilled'; created_at: number };
+type RequestEntry = { id: string; user_name: string; title: string; kind: 'movie' | 'series'; year?: number; notes: string; status: 'pending' | 'approved' | 'rejected' | 'fulfilled'; created_at: number; download_state?: string|null; download_detail?: string|null; release_name?: string|null; destination?: string|null };
 type Tab = 'home' | 'movies' | 'series' | 'search' | 'continue' | 'favorites' | 'requests' | 'downloads' | 'settings' | 'admin';
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -95,7 +96,7 @@ function App() {
       {tab === 'requests' && <MediaRequests user={user} onShowDownloads={() => setTab('downloads')} />}
       {tab === 'downloads' && user.isAdmin && <DownloadsPanel />}
       {tab === 'admin' && user.isAdmin && <Admin />}
-      {tab === 'settings' && <section className="content-section"><div className="heading"><p className="eyebrow">YOUR EXPERIENCE</p><h1>Settings</h1><p>Manage your account and connection.</p></div><div className="setting-card"><div><h3>Account</h3><p>Signed in as <strong>{user.name}</strong>. Your history and favorites belong to this Jellyfin user.</p></div><button className="btn btn-ghost" onClick={() => logout.mutate()}><LogOut size={16}/> Sign out</button></div><div className="setting-card"><div><h3>Connection</h3><p>Connection type: <strong>{connectionLabel}</strong></p><small className="muted">Your server address is intentionally hidden from this interface.</small></div><button className="btn btn-ghost" onClick={() => qc.invalidateQueries()}><ArrowRight size={16}/> Refresh data</button></div><div className="setting-card"><div><h3>Motion & accessibility</h3><p>Animations honor your system's reduced motion setting.</p></div><span className="mini-label">SYSTEM CONTROLLED</span></div></section>}
+      {tab === 'settings' && <section className="content-section"><div className="heading"><p className="eyebrow">YOUR EXPERIENCE</p><h1>Settings</h1><p>Manage your account and connection.</p></div><div className="setting-card"><div><h3>Account</h3><p>Signed in as <strong>{user.name}</strong>. Your history and favorites belong to this Jellyfin user.</p></div><button className="btn btn-ghost" onClick={() => logout.mutate()}><LogOut size={16}/> Sign out</button></div><div className="setting-card"><div><h3>Connection</h3><p>Connection type: <strong>{connectionLabel}</strong></p><small className="muted">Your server address is intentionally hidden from this interface.</small></div><button className="btn btn-ghost" onClick={() => qc.invalidateQueries()}><ArrowRight size={16}/> Refresh data</button></div><UpdatePanel/><div className="setting-card"><div><h3>Motion & accessibility</h3><p>Animations honor your system's reduced motion setting.</p></div><span className="mini-label">SYSTEM CONTROLLED</span></div></section>}
       <footer className="footer">CRIMSONFIN · CONNECTED TO YOUR JELLYFIN SERVER</footer>
     </main>
     {selected && <Details key={selected.Id} item={selected} onClose={() => setSelected(null)} onPlay={play} onMutation={() => qc.invalidateQueries()} />}
@@ -147,7 +148,7 @@ function MediaRequests({ user, onShowDownloads }: { user: Account; onShowDownloa
   const [year, setYear] = useState(''); const [notes, setNotes] = useState(''); const [search, setSearch] = useState('');
   const [searchCommitted, setSearchCommitted] = useState('');
   const [queueKind, setQueueKind] = useState<'movie' | 'series'>('movie');
-  const requests = useQuery({ queryKey: ['requests'], queryFn: () => api<{ requests: RequestEntry[] }>('/api/requests') });
+  const requests = useQuery({ queryKey: ['requests'], queryFn: () => api<{ requests: RequestEntry[] }>('/api/requests'), refetchInterval: 20000 });
   const filelistSettings = useQuery({ queryKey: ['filelistAdminSettings'], queryFn: () =>
     api<{ apiConfigured: boolean; downloaderConfigured: boolean }>('/api/admin/filelist/settings'),
     enabled: user.isAdmin });
@@ -158,14 +159,129 @@ function MediaRequests({ user, onShowDownloads }: { user: Account; onShowDownloa
 
   const catalog = useQuery({ queryKey: ['filelist', searchCommitted], queryFn: () => api<{ configured: boolean; results: { id: string; name: string; size: string; seeders: number | null; downloadable?: boolean }[]; source?: string }>(`/api/filelist/search?q=${encodeURIComponent(searchCommitted)}`), enabled: searchCommitted.length > 1, staleTime: 300000 });
   const create = useMutation({ mutationFn: () => api('/api/requests', { method: 'POST', body: JSON.stringify({ kind, title, year, notes }) }), onSuccess: () => { setTitle(''); setYear(''); setNotes(''); qc.invalidateQueries({ queryKey: ['requests'] }); } });
-  return <section className="content-section"><div className="heading"><p className="eyebrow">YOUR VOICE, YOUR LIBRARY</p><h1>Media requests</h1><p>Suggest a movie or show. An administrator reviews every request.</p></div><div className="request-columns"><div className="panel"><h2><Plus size={21}/> New request</h2><form onSubmit={e => { e.preventDefault(); create.mutate(); }}><label>MEDIA TYPE</label><div className="segmented"><button type="button" className={kind === 'movie' ? 'selected' : ''} onClick={() => setKind('movie')}><Film size={16}/> Movie</button><button type="button" className={kind === 'series' ? 'selected' : ''} onClick={() => setKind('series')}><Tv2 size={16}/> TV Show</button></div><label htmlFor="request-title">TITLE</label><input id="request-title" required minLength={2} maxLength={180} placeholder="What would you like to watch?" value={title} onChange={e => setTitle(e.target.value)}/><label htmlFor="request-year">YEAR (OPTIONAL)</label><input id="request-year" type="number" min={1888} max={2100} value={year} onChange={e => setYear(e.target.value)} placeholder="2026"/><label htmlFor="request-note">NOTES (OPTIONAL)</label><textarea id="request-note" maxLength={500} rows={3} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Edition, language, season…"/><button className="btn btn-primary" type="submit" disabled={create.isPending}><Send size={17}/>{create.isPending ? 'Sending…' : 'Send request'}</button>{create.isSuccess && <p className="success"><Check size={16}/> Request saved.</p>}{create.error && <p className="error">{create.error.message}</p>}</form></div><div className="panel"><h2><Search size={21}/> FileList availability</h2><p className="muted">Search FileList releases. Administrators can queue movies and TV shows directly to the best available library drive.</p>{user.isAdmin && <label className="download-kind-label">DOWNLOAD AS <select aria-label="Download media type" value={queueKind} onChange={e => setQueueKind(e.target.value as 'movie'|'series')}><option value="movie">Movie · Movies library</option><option value="series">TV show · Shows library</option></select></label>}<form className="tracker-search" onSubmit={e => { e.preventDefault(); setSearchCommitted(search.trim()); }}><input minLength={2} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search title on FileList…"/><button className="btn btn-ghost" type="submit"><Search size={17}/></button></form>{catalog.isFetching && <div className="placeholder">Searching FileList…</div>}{catalog.isError && <p className="error">{catalog.error.message}</p>}{catalog.data && (!catalog.data.configured ? <div className="empty-state">FileList isn't configured on this server. You can still submit requests.</div> : catalog.data.results.length ? <div className="tracker-list">{catalog.data.results.map((r, index) => <div className="tracker-result" key={`${r.id}-${index}`}><button title="Use title for request" onClick={() => setTitle(r.name.replace(/\./g, ' '))}><span><strong>{r.name}</strong><small>{r.size ? `Size: ${r.size} · ` : ''}{r.seeders == null ? 'Recent RSS entry' : 'Seeders: ' + r.seeders}</small></span><Plus size={16}/></button>{user.isAdmin && catalog.data.source === 'api' && r.downloadable && <div className="torrent-actions"><a className="torrent-download" href={`/api/admin/filelist/torrent/${r.id}`} download>.torrent</a>{filelistSettings.data?.downloaderConfigured && <button className="queue-download" type="button" disabled={queue.isPending} onClick={() => queue.mutate({id:r.id,kind:queueKind})}>Download on server</button>}</div>}</div>)}</div> : <div className="empty-state">No matches in the recent FileList feed.</div>)}{queue.isSuccess && <p className="success">Queued as {queue.data?.kind === 'series' ? 'TV Show' : 'Movie'}{queue.data?.classifiedAsShow ? ' (auto-detected)' : ''} to {queue.data?.drive || 'the selected drive'} · {queue.data?.folder || 'the Jellyfin library'}. </p>}{queue.error && <p className="error">{queue.error.message}</p>}{user.isAdmin && <button className="btn btn-ghost show-downloads" onClick={onShowDownloads}><DownloadCloud size={16}/> View download progress</button>}</div></div><div className="requests-history"><div className="shelf-header"><div><h2>{user.isAdmin ? 'All media requests' : 'Your requests'}</h2><p>Track the status of every suggestion</p></div><button className="btn btn-ghost" onClick={() => requests.refetch()}>Refresh <ArrowRight size={16}/></button></div>{requests.data?.requests.length ? <div className="request-table">{requests.data.requests.map(r => <div className="request-row" key={r.id}><div><strong>{r.title}{r.year ? ` (${r.year})` : ''}</strong><small>{r.kind === 'movie' ? 'Movie' : 'TV show'} · {new Date(r.created_at).toLocaleDateString()}{user.isAdmin ? ` · ${r.user_name}` : ''}{r.notes ? ` · ${r.notes}` : ''}</small></div><span className={`status status-${r.status}`}>{r.status}</span></div>)}</div> : <div className="empty-state">No requests yet. You can be the first to submit one.</div>}</div></section>;
+  return <section className="content-section"><div className="heading"><p className="eyebrow">YOUR VOICE, YOUR LIBRARY</p><h1>Media requests</h1><p>Suggest a movie or show. An administrator reviews every request.</p></div><div className="request-columns"><div className="panel"><h2><Plus size={21}/> New request</h2><form onSubmit={e => { e.preventDefault(); create.mutate(); }}><label>MEDIA TYPE</label><div className="segmented"><button type="button" className={kind === 'movie' ? 'selected' : ''} onClick={() => setKind('movie')}><Film size={16}/> Movie</button><button type="button" className={kind === 'series' ? 'selected' : ''} onClick={() => setKind('series')}><Tv2 size={16}/> TV Show</button></div><label htmlFor="request-title">TITLE</label><input id="request-title" required minLength={2} maxLength={180} placeholder="What would you like to watch?" value={title} onChange={e => setTitle(e.target.value)}/><label htmlFor="request-year">YEAR (OPTIONAL)</label><input id="request-year" type="number" min={1888} max={2100} value={year} onChange={e => setYear(e.target.value)} placeholder="2026"/><label htmlFor="request-note">NOTES (OPTIONAL)</label><textarea id="request-note" maxLength={500} rows={3} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Edition, language, season…"/><button className="btn btn-primary" type="submit" disabled={create.isPending}><Send size={17}/>{create.isPending ? 'Sending…' : 'Send request'}</button>{create.isSuccess && <p className="success"><Check size={16}/> Request saved.</p>}{create.error && <p className="error">{create.error.message}</p>}</form></div><div className="panel"><h2><Search size={21}/> FileList availability</h2><p className="muted">Search FileList releases. Administrators can queue movies and TV shows directly to the best available library drive.</p>{user.isAdmin && <label className="download-kind-label">DOWNLOAD AS <select aria-label="Download media type" value={queueKind} onChange={e => setQueueKind(e.target.value as 'movie'|'series')}><option value="movie">Movie · Movies library</option><option value="series">TV show · Shows library</option></select></label>}<form className="tracker-search" onSubmit={e => { e.preventDefault(); setSearchCommitted(search.trim()); }}><input minLength={2} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search title on FileList…"/><button className="btn btn-ghost" type="submit"><Search size={17}/></button></form>{catalog.isFetching && <div className="placeholder">Searching FileList…</div>}{catalog.isError && <p className="error">{catalog.error.message}</p>}{catalog.data && (!catalog.data.configured ? <div className="empty-state">FileList isn't configured on this server. You can still submit requests.</div> : catalog.data.results.length ? <div className="tracker-list">{catalog.data.results.map((r, index) => <div className="tracker-result" key={`${r.id}-${index}`}><button title="Use title for request" onClick={() => setTitle(r.name.replace(/\./g, ' '))}><span><strong>{r.name}</strong><small>{r.size ? `Size: ${r.size} · ` : ''}{r.seeders == null ? 'Recent RSS entry' : 'Seeders: ' + r.seeders}</small></span><Plus size={16}/></button>{user.isAdmin && catalog.data.source === 'api' && r.downloadable && <div className="torrent-actions"><a className="torrent-download" href={`/api/admin/filelist/torrent/${r.id}`} download>.torrent</a>{filelistSettings.data?.downloaderConfigured && <button className="queue-download" type="button" disabled={queue.isPending} onClick={() => queue.mutate({id:r.id,kind:queueKind})}>Download on server</button>}</div>}</div>)}</div> : <div className="empty-state">No matches in the recent FileList feed.</div>)}{queue.isSuccess && <p className="success">Queued as {queue.data?.kind === 'series' ? 'TV Show' : 'Movie'}{queue.data?.classifiedAsShow ? ' (auto-detected)' : ''} to {queue.data?.drive || 'the selected drive'} · {queue.data?.folder || 'the Jellyfin library'}. </p>}{queue.error && <p className="error">{queue.error.message}</p>}{user.isAdmin && <button className="btn btn-ghost show-downloads" onClick={onShowDownloads}><DownloadCloud size={16}/> View download progress</button>}</div></div><div className="requests-history"><div className="shelf-header"><div><h2>{user.isAdmin ? 'All media requests' : 'Your requests'}</h2><p>Track the status of every suggestion</p></div><button className="btn btn-ghost" onClick={() => requests.refetch()}>Refresh <ArrowRight size={16}/></button></div>{requests.data?.requests.length ? <div className="request-table">{requests.data.requests.map(r => <div className="request-row" key={r.id}><div><strong>{r.title}{r.year ? ` (${r.year})` : ''}</strong><small>{r.kind === 'movie' ? 'Movie' : 'TV show'} · {new Date(r.created_at).toLocaleDateString()}{user.isAdmin ? ` · ${r.user_name}` : ''}{r.notes ? ` · ${r.notes}` : ''}</small></div><span className={`status status-${r.status}`}>{r.status}</span>{r.status==='approved'&&<small className="request-state-sub">{downloadStatusLabel(r.download_state)}</small>}{r.download_detail&&<small className="request-state-sub" title={r.download_detail}>{r.download_detail}</small>}</div>)}</div> : <div className="empty-state">No requests yet. You can be the first to submit one.</div>}</div></section>;
 }
 function Admin() {
   const qc = useQueryClient();
-  const requests = useQuery({ queryKey: ['requests'], queryFn: () => api<{ requests: RequestEntry[] }>('/api/requests') });
-  const status = useQuery({ queryKey: ['adminStatus'], queryFn: () => api<{ jellyfinReachable: boolean; filelistConfigured: boolean; pendingRequests: number }>('/api/admin/status'), refetchInterval: 45000 });
-  const mutate = useMutation({ mutationFn: (arg: { id: string; status: string }) => api(`/api/requests/${arg.id}`, { method: 'PATCH', body: JSON.stringify({ status: arg.status }) }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['requests'] }); qc.invalidateQueries({ queryKey: ['adminStatus'] }); } });
-  return <section className="content-section"><div className="heading"><p className="eyebrow">ADMINISTRATOR ACCESS</p><h1>Server & requests</h1><p>Review your server's connection and manage media suggestions.</p></div><div className="admin-stats"><div className="stat"><small>JELLYFIN CONNECTION</small><strong>{status.isLoading ? 'Checking…' : status.isError ? 'Unavailable' : status.data?.jellyfinReachable ? 'Connected' : 'Not connected'}</strong></div><div className="stat"><small>FILELIST INTEGRATION</small><strong>{status.isLoading ? 'Checking…' : status.isError ? 'Unavailable' : status.data?.filelistConfigured ? 'Configured' : 'Not configured'}</strong></div><div className="stat"><small>PENDING REQUESTS</small><strong>{status.data?.pendingRequests ?? '–'}</strong></div></div><div className="panel admin-list"><h2>Review requests</h2>{requests.data?.requests.length ? requests.data.requests.map(r => <div className="review-row" key={r.id}><div><strong>{r.title}</strong><small>{r.user_name} · {r.kind}{r.year ? ` · ${r.year}` : ''} · {r.notes || 'No additional notes'}</small></div><select disabled={mutate.isPending} aria-label={`Status for ${r.title}`} value={r.status} onChange={e => mutate.mutate({ id: r.id, status: e.target.value })}><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="fulfilled">Fulfilled</option></select></div>) : <div className="empty-state">No requests to review.</div>}{mutate.error && <p className="error">{mutate.error.message}</p>}</div><FileListConfiguration /><SubtitleCoverage /></section>;
+  const requests = useQuery({
+    queryKey: ['requests'],
+    queryFn: () => api<{ requests: RequestEntry[] }>('/api/requests'),
+    refetchInterval: 15000
+  });
+  const status = useQuery({
+    queryKey: ['adminStatus'],
+    queryFn: () => api<{ jellyfinReachable: boolean; filelistConfigured: boolean; pendingRequests: number }>('/api/admin/status'),
+    refetchInterval: 45000
+  });
+  const [selectionId, setSelectionId] = useState<string | null>(null);
+  const options = useQuery({
+    queryKey: ['request-release-options', selectionId],
+    queryFn: () => api<{ requestId: string; query: string; results: {id: string;name: string;size: string;seeders: number|null;downloadable?:boolean}[] }>(
+      '/api/requests/' + encodeURIComponent(selectionId!) + '/releases'),
+    enabled: !!selectionId,
+    staleTime: 0
+  });
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['requests'] });
+    qc.invalidateQueries({ queryKey: ['adminStatus'] });
+    qc.invalidateQueries({ queryKey: ['downloadManager'] });
+  };
+  const mutate = useMutation({
+    mutationFn: (arg: { id: string; status: string; kind?: 'movie'|'series' }) =>
+      api<{ ok: boolean; downloadState?: string; detail?: string }>(`/api/requests/${arg.id}`, {
+        method: 'PATCH', body: JSON.stringify({status: arg.status,...(arg.kind?{kind:arg.kind}:{})}),
+        signal: AbortSignal.timeout(50000)
+      }),
+    onSuccess: refresh
+  });
+  const retry = useMutation({
+    mutationFn: (id: string) => api<{state: string; detail?:string}>(
+      '/api/requests/' + encodeURIComponent(id) + '/process', {
+        method: 'POST', body: JSON.stringify({}), signal: AbortSignal.timeout(50000)
+      }),
+    onSuccess: refresh
+  });
+  const queue = useMutation({
+    mutationFn: (arg: { id: string; releaseId: string }) => api<{state: string; detail?:string}>(
+      '/api/requests/' + encodeURIComponent(arg.id) + '/queue', {
+        method: 'POST', body: JSON.stringify({releaseId: arg.releaseId}), signal: AbortSignal.timeout(50000)
+      }),
+    onSuccess: () => { setSelectionId(null); refresh(); }
+  });
+  const busy = mutate.isPending || retry.isPending || queue.isPending;
+  return <section className="content-section">
+    <div className="heading"><p className="eyebrow">ADMINISTRATOR ACCESS</p>
+      <h1>Server & requests</h1>
+      <p>Approving a request automatically searches FileList and queues an exact release match in qBittorrent.
+        Ambiguous results wait for your selection.</p>
+    </div>
+    <div className="admin-stats">
+      <div className="stat"><small>JELLYFIN CONNECTION</small><strong>{status.isLoading?'Checking…':status.isError?'Unavailable':status.data?.jellyfinReachable?'Connected':'Not connected'}</strong></div>
+      <div className="stat"><small>FILELIST INTEGRATION</small><strong>{status.isLoading?'Checking…':status.isError?'Unavailable':status.data?.filelistConfigured?'Configured':'Not configured'}</strong></div>
+      <div className="stat"><small>PENDING REQUESTS</small><strong>{status.data?.pendingRequests??'–'}</strong></div>
+    </div>
+    <div className="panel admin-list">
+      <h2>Review requests</h2>
+      {requests.data?.requests.length?requests.data.requests.map(r=><div className="review-request" key={r.id}>
+        <div className="review-row">
+          <div><strong>{r.title}</strong>
+            <small>{r.user_name} · {r.kind==='movie'?'Movie':'TV show'}{r.year?' · '+r.year:''} · {r.notes||'No additional notes'}</small>
+          </div>
+          <select disabled={busy} aria-label={`Status for ${r.title}`} value={r.status}
+            onChange={e=>mutate.mutate({id:r.id,status:e.target.value})}>
+            <option value="pending">Pending</option><option value="approved">Approved</option>
+            <option value="rejected">Rejected</option><option value="fulfilled">Fulfilled</option>
+          </select>
+        </div>
+        {r.status==='approved'&&<div className="approval-progress">
+          <span className={`request-progress-tag request-progress-${r.download_state||'new'}`}>
+            {downloadStatusLabel(r.download_state)}
+          </span>
+          {r.release_name&&<span className="request-release-name" title={r.release_name}>{r.release_name}</span>}
+          {r.download_detail&&<span className="request-detail">{r.download_detail}</span>}
+          {!['queued','downloading','completed','searching'].includes(r.download_state||'')&&<>
+            <button className="btn btn-ghost" disabled={busy} onClick={()=>retry.mutate(r.id)}>
+              <RefreshCw size={14}/> {retry.isPending?'Searching…':'Retry automatic match'}
+            </button>
+            <button className="btn btn-ghost" disabled={busy} onClick={()=>setSelectionId(selectionId===r.id?null:r.id)}>
+              <Search size={14}/> {selectionId===r.id?'Hide releases':'Choose FileList release'}
+            </button>
+            <label className="request-type-fix">MEDIA TYPE
+              <select disabled={busy} value={r.kind} onChange={e=>mutate.mutate({id:r.id,status:r.status,kind:e.target.value as 'movie'|'series'})}>
+                <option value="movie">Movie</option><option value="series">TV show</option>
+              </select>
+            </label>
+          </>}
+        </div>}
+        {selectionId===r.id&&r.status==='approved'&&<div className="approval-releases">
+          <strong>FileList matches</strong>
+          {options.isFetching&&<p>Searching tracker…</p>}
+          {options.error&&<p className="error">{options.error.message}</p>}
+          {options.data&&!options.data.results.length&&<p>No releases found. Try another title or search FileList manually.</p>}
+          {(options.data?.results||[]).slice(0,25).map(x=><div className="approval-release" key={x.id}>
+            <div><strong>{x.name}</strong><small>{x.size} · {x.seeders??'—'} seeders</small></div>
+            <button className="queue-download" disabled={busy||!x.downloadable}
+              onClick={()=>queue.mutate({id:r.id,releaseId:x.id})}>Download</button>
+          </div>)}
+        </div>}
+      </div>):<div className="empty-state">No requests to review.</div>}
+      {mutate.isPending&&<p className="muted">Processing approval and checking FileList…</p>}
+      {mutate.error&&<p className="error">{mutate.error.message}</p>}
+      {retry.error&&<p className="error">{retry.error.message}</p>}
+      {queue.error&&<p className="error">{queue.error.message}</p>}
+    </div>
+    <FileListConfiguration/>
+    <SubtitleCoverage/>
+  </section>;
+}
+
+function downloadStatusLabel(state?: string|null) {
+  const labels: Record<string,string> = {
+    searching:'Searching FileList',needs_review:'Needs release selection',
+    queued:'Queued in qBittorrent',downloading:'Downloading',
+    completed:'Downloaded',failed:'Unable to queue'
+  };
+  return labels[state||'']||'Approved · not queued yet';
 }
 
 

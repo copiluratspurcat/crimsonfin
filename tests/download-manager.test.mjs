@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chooseStorage, parseTorrentSizeBytes, createDownloadManager } from '../server/download-manager.mjs';
 
+const enc = v => {
+ if(typeof v === 'number') return Buffer.from('i'+v+'e');
+ if(Buffer.isBuffer(v) || typeof v === 'string'){const b=Buffer.from(v);return Buffer.concat([Buffer.from(b.length+':'),b]);}
+ if(Array.isArray(v))return Buffer.concat([Buffer.from('l'),...v.map(enc),Buffer.from('e')]);
+ return Buffer.concat([Buffer.from('d'),...Object.keys(v).sort().flatMap(k=>[enc(k),enc(v[k])]),Buffer.from('e')]);
+};
+
 const GiB = 1024 ** 3;
 const drives = [
   {id:'ADATA',name:'ADATA',totalBytes:2_000*GiB,freeBytes:1_700*GiB,
@@ -67,6 +74,12 @@ test('Authenticated qBittorrent queue sets the proper Movies or Shows savepath',
   assert.equal(status.downloads.length,1);
   assert.equal(status.downloads[0].progress,35);
   assert.equal(status.active,1);
+});
+
+test('Manual FileList downloads reject mislabelled seasons before a queue request',async()=>{
+ const bad=enc({info:{name:'Lupin.S04.2160p.WEB-DL',files:[{length:1000,path:['Lupin.S04E01.mkv']}], 'piece length':16384,pieces:Buffer.alloc(20)}});
+ const client=createDownloadManager({env:{QBIT_URL:'http://127.0.0.1:8877'}});
+ await assert.rejects(()=>client.queueTorrentFile(bad,'series',1,'Lupin.2021.S03.2160p'),/Season 3.*Season 4|Malformed/);
 });
 
 test('qBittorrent endpoint is restricted to loopback',()=>{

@@ -64,6 +64,8 @@ jobs:
             releases/*.exe
             releases/*.deb
             releases/*.AppImage
+            releases/latest*.yml
+            releases/*.blockmap
           if-no-files-found: error
           retention-days: 14
 
@@ -83,27 +85,31 @@ jobs:
         run: |
           find release-assets -maxdepth 1 -name '*.exe' | grep -q .
           find release-assets -maxdepth 1 -name '*.deb' | grep -q .
-      - name: Determine release channel
+      - name: Determine stable version tag
         id: meta
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
-            echo "preview=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=preview-$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
-            echo "preview=true" >> "$GITHUB_OUTPUT"
-          fi
+          VERSION=$(node -p "require('./package.json').version")
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Validate update feed manifests
+        shell: bash
+        run: |
+          test -s release-assets/latest.yml
+          test -s release-assets/latest-linux.yml
+          find release-assets -maxdepth 1 -type f -name '*.exe' -size +40M | grep -q .
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: CrimsonFin ${{ steps.meta.outputs.tag }}
-          prerelease: ${{ steps.meta.outputs.preview }}
+          prerelease: false
+          make_latest: true
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
             release-assets/*.exe
             release-assets/*.deb
             release-assets/*.AppImage
+            release-assets/latest*.yml
+            release-assets/*.blockmap
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

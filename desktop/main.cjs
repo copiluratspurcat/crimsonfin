@@ -1,8 +1,9 @@
 'use strict';
-const { app, BrowserWindow, Menu, shell, session } = require('electron');
+const { app, BrowserWindow, Menu, shell, session, ipcMain, dialog } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { probeLocal, matchesPinnedCertificate } = require('./local-route.cjs');
+const { startAutoUpdates } = require('./updates.cjs');
 
 function getConfig() {
   const files = [path.join(__dirname, 'config.json'), path.join(__dirname, 'release-target.json')];
@@ -54,7 +55,7 @@ async function makeWindow() {
   const win = new BrowserWindow({
     width: 1440, height: 900, minWidth: 850, minHeight: 580,
     backgroundColor: '#0b1019', title: 'CrimsonFin', show: false,
-    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, partition: 'persist:crimsonfin' }
+    webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.cjs'), partition: 'persist:crimsonfin' }
   });
   win.once('ready-to-show', () => win.show());
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -83,7 +84,7 @@ async function makeWindow() {
   return win;
 }
 app.whenReady().then(() => {
-  makeWindow().catch(err => console.error('[CrimsonFin] Window startup failed', err?.name));
+  makeWindow().then(win => startAutoUpdates({app, win, ipcMain, dialog, shell})).catch(err => console.error('[CrimsonFin] Window startup failed', err?.name));
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) makeWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

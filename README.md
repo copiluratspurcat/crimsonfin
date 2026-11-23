@@ -291,3 +291,54 @@ and are intentionally not included in the public GitHub repository.
 File metadata identification may still be inaccurate until Jellyfin rescans
 the series or an administrator identifies the correct series. Episode
 availability for torrents that are still downloading is not guaranteed.
+
+
+## v2.5.0 — Desktop auto-updates and approved media request downloads
+
+### Auto-update setup
+
+The public GitHub repository is the official **stable** update source.
+Desktop apps installed from v2.5.0 onward use `electron-updater` with the
+embedded `app-update.yml`. GitHub Actions creates a stable `vX.Y.Z` release
+and publishes the Windows `.exe`, Linux `.deb` and AppImage, along with
+`latest.yml`, `latest-linux.yml`, and optional blockmap metadata. The
+package update manifests include SHA-512 checksums. Do not distribute update
+metadata separately from its corresponding installer.
+
+The **Windows NSIS installer** checks for updates shortly after launch and
+every four hours while running. A new release downloads automatically and
+prompts for a restart. Updates can also be checked under Settings → App
+updates. Linux AppImage supports the same mechanism. Linux `.deb`
+installations display a link to the latest stable release because system
+package installation can require elevated privileges. The web-only version
+runs from the server and is updated immediately on server deployment.
+
+Existing v2.4.0 desktop installations do **not** have an auto-updater: every
+friend must install v2.5.0 once. Subsequent Windows updates will not require
+redistribution of the installer. An unsigned Windows installer may still
+trigger a Windows SmartScreen warning on its first installation.
+
+Never put a GitHub personal access token into the desktop app. Publishing
+uses GitHub Actions' built-in `GITHUB_TOKEN`, while the public update
+feed uses only the official public GitHub release metadata.
+
+### Approved media requests
+
+The admin's **Approved** action attempts a FileList search and automatically
+queues only an **unambiguous, exact normalized release title** that matches
+the media type and actual torrent contents. The request remains visible to
+the requester with a download status: searching, needs review, queued,
+downloading or downloaded. Queued requests are linked to the torrent's
+infohash, and repeat approvals do not add duplicate torrents.
+
+If FileList returns ambiguous releases, no releases, a mislabeled season,
+or an incorrectly classified movie/series, nothing is downloaded and the
+admin is shown a clear **Needs release selection** status. The admin panel
+allows manual release selection, retry, or correction of the request's
+Movie/TV type. The downloader verifies season numbers in the real torrent
+file list against the advertised tracker release, preventing a misleading
+S03 listing from silently queuing S04 files.
+
+All torrent downloads remain server-side, restricted to administrators,
+and use the existing Jellyfin Movies/Shows folders and available-disk-space
+selection. The FileList API credentials are never forwarded to clients.

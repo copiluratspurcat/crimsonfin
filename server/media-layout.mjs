@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 // Parse only the untrusted bencoded torrent metadata, never execute or fetch
 // anything from the torrent itself. A strict size/depth/item limit avoids DoS.
@@ -6,7 +7,7 @@ export function parseTorrentInfo(buffer) {
   if (!Buffer.isBuffer(buffer) || buffer.length < 8 || buffer.length > 5_000_000) {
     throw new Error('Invalid torrent metadata');
   }
-  let pos = 0, nodes = 0;
+  let pos = 0, nodes = 0, infoBytes = null;
   function read(depth = 0) {
     if (++nodes > 120_000 || depth > 20 || pos >= buffer.length) throw new Error('Malformed torrent metadata');
     const lead = buffer[pos];
@@ -36,7 +37,11 @@ export function parseTorrentInfo(buffer) {
         const key = read(depth + 1);
         if (!Buffer.isBuffer(key) || key.length > 180) throw new Error('Invalid torrent key');
         const name = key.toString('utf8');
-        dict[name] = read(depth + 1);
+        if (depth === 0 && name === 'info') {
+          const start = pos;
+          dict[name] = read(depth + 1);
+          infoBytes = buffer.subarray(start,pos);
+        } else dict[name] = read(depth + 1);
       }
       if (pos >= buffer.length) throw new Error('Unclosed torrent dictionary');
       pos++;
@@ -61,7 +66,8 @@ export function parseTorrentInfo(buffer) {
   const files = Array.isArray(info.files)
     ? info.files.map(f => Array.isArray(f?.path) ? f.path.map(text).join('/') : '')
     : [text(info.name)];
-  return { rootName: text(info['name.utf-8'] || info.name), files };
+  return { rootName: text(info['name.utf-8'] || info.name), files,
+    infoHash: infoBytes ? createHash('sha1').update(infoBytes).digest('hex') : '' };
 }
 const EXT = /\.(?:mkv|mp4|m4v|avi|webm|ts)$/i;
 const EPISODE = /(?:^|[. _\-])s\d{1,2}[. _\-]?e\d{1,3}(?:\D|$)/i;

@@ -191,6 +191,10 @@ export function createDownloadManager({
       throw invalid('Invalid torrent metadata', 400);
     }
     const classification = classifyTorrent(torrent, releaseName, kind);
+    const listed=String(releaseName).match(/(?:^|[._\s-])S(\d{1,2})(?=[._\s-]|$)/i);
+    if (listed && classification.seasonNumber != null && Number(listed[1]) !== classification.seasonNumber) {
+      throw invalid('Tracker advertises Season '+Number(listed[1])+' but the torrent files contain Season '+classification.seasonNumber,409);
+    }
     const drives = storageProvider(env);
     const raw = await listRaw();
     const reserved = Object.create(null);
