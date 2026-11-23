@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { buildHlsUrl } from './hls-url';
-import { ArrowLeft, Captions, ChevronDown, Clapperboard, Pause, Play, RotateCcw, RotateCw, Settings2, SlidersHorizontal, Volume2 } from 'lucide-react';
+import { ArrowLeft, Captions, ChevronDown, Clapperboard, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Settings2, SlidersHorizontal, Volume2 } from 'lucide-react';
 
 type StreamInfo = {
   Index: number;
@@ -36,8 +36,13 @@ function isSubtitleUsable(s: StreamInfo) { return s.Type === 'Subtitle' && TEXT_
 
 export function Player({ item, onClose }: { item: PlayerItem; onClose: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const screenRef = useRef<HTMLDivElement>(null);
+  const exitDialogRef = useRef<HTMLDialogElement>(null);
   const [detail, setDetail] = useState<Details | null>(null);
-  const [status, setStatus] = useState('Preparing your player…');
+  const [status, setStatus] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreenError, setFullscreenError] = useState('');
   const [quality, setQuality] = useState(12_000_000);
   const [audioChoice, setAudioChoice] = useState('auto');
   const [subtitleChoice, setSubtitleChoice] = useState('auto');
@@ -59,10 +64,17 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
     }).then(async response => {
       if (!response.ok) throw new Error('Playback track information is unavailable.');
       return response.json();
-    }).then((value: Details) => setDetail(value)).catch(err => {
+    }).then((value: Details) => {
+      if (abort.signal.aborted) return;
+      setDetail(value);
+      if (!value.MediaSources?.[0]?.Id) {
+        setLoading(false);
+        setStatus('No playable stream is available for this title.');
+      }
+    }).catch(err => {
       if (!abort.signal.aborted) {
+        setLoading(false);
         setStatus(err instanceof Error ? err.message : 'Unable to load media tracks');
-        setDetail({ ...item, MediaSources: [] });
       }
     });
     return () => abort.abort();
@@ -101,6 +113,27 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
     setAudioChoice(value);
   }
 
+  const toggleFullscreen = useCallback(async () => {
+    const screen = screenRef.current;
+    if (!screen) return;
+    setFullscreenError('');
+    try {
+      if (document.fullscreenElement === screen) await document.exitFullscreen();
+      else await screen.requestFullscreen();
+    } catch {
+      setFullscreenError('Could not switch fullscreen mode.');
+    }
+  }, []);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setFullscreen(document.fullscreenElement === screenRef.current);
+      setFullscreenError('');
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
+
   useEffect(() => {
     if (!source?.Id) return;
     const video = videoRef.current;
@@ -124,11 +157,16 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
     const onPlaying = () => {
       started = true;
       setPlaying(true);
+      setLoading(false);
       setStatus('');
       report('Playing');
     };
     const onPaused = () => { setPlaying(false); report('Progress'); };
-    const onError = () => setStatus('Unable to play this format. Switch off Direct or choose a lower quality.');
+    const showPlaybackError = (message: string) => {
+      setLoading(false);
+      setStatus(message);
+    };
+    const onError = () => showPlaybackError('Unable to play this stream. Try a lower quality.');
     const onTime = () => {
       if (Number.isFinite(video.currentTime)) setClock(Math.floor(video.currentTime));
       if (Number.isFinite(video.duration)) setDuration(video.duration);
@@ -141,8 +179,13 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
       }
     };
     const startPlayback = () => {
+      setLoading(false);
       restorePosition();
-      if (resumePlayingRef.current) video.play().catch(() => setStatus('Press Play to begin.'));
+      if (resumePlayingRef.current) video.play().catch(err => {
+        if (disposed || err?.name === 'AbortError') return;
+        if (err?.name === 'NotAllowedError') setStatus('Press Play to begin.');
+        else onError();
+      });
     };
     const onEnded = () => report('Stopped');
     video.addEventListener('playing', onPlaying);
@@ -152,18 +195,20 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
     video.addEventListener('loadedmetadata', restorePosition);
     video.addEventListener('canplay', startPlayback, { once: true });
     video.addEventListener('ended', onEnded);
-    setStatus('Loading stream…');
+    setPlaying(false);
+    setLoading(true);
+    setStatus('');
 
     if (Hls.isSupported()) {
       hls = new Hls({ enableWorker: true, backBufferLength: 30, maxBufferLength: 45, lowLatencyMode: false });
       hls.on(Hls.Events.ERROR, (_event, info) => {
-        if (info.fatal) setStatus(`Stream error (${info.type}). ${info.details || 'Could not load video.'}`);
+        if (!disposed && info.fatal) showPlaybackError(`Stream error (${info.type}). ${info.details || 'Could not load video.'}`);
       });
       hls.attachMedia(video);
       hls.on(Hls.Events.MEDIA_ATTACHED, () => hls?.loadSource(uri));
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = uri;
-    } else setStatus('HLS playback is unavailable in this browser.');
+    } else showPlaybackError('HLS playback is unavailable in this browser.');
 
     const progress = setInterval(() => report('Progress'), 15_000);
     return () => {
@@ -221,17 +266,32 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
 
   useEffect(() => {
     const keydown = (e: KeyboardEvent) => {
+      const exitDialog = exitDialogRef.current;
+      if (e.key === 'Escape') {
+        if (e.repeat) { e.preventDefault(); return; }
+        if (e.defaultPrevented) return;
+        if (document.fullscreenElement === screenRef.current) {
+          e.preventDefault();
+          void toggleFullscreen();
+          return;
+        }
+        if (document.fullscreenElement || !exitDialog || exitDialog.open) return;
+        e.preventDefault();
+        exitDialog.showModal();
+        return;
+      }
+      if (exitDialog?.open) return;
       if (e.target instanceof HTMLElement &&
           ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName)) return;
       if (e.key === 'ArrowLeft') { e.preventDefault(); jump(-10); }
       if (e.key === 'ArrowRight') { e.preventDefault(); jump(10); }
-      if (e.key === 'Escape') { e.preventDefault(); onClose(); }
     };
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
-  }, [onClose]);
+  }, [toggleFullscreen]);
 
   const mediaId = source?.Id;
+  const fullscreenLabel = fullscreen ? 'Exit fullscreen' : 'Enter fullscreen';
   return <div className="player-page" role="dialog" aria-label={`Playing ${item.Name}`} aria-modal="true">
     <header className="player-top">
       <button className="player-back" title="Return to library" onClick={onClose}><ArrowLeft size={22}/></button>
@@ -240,8 +300,8 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
       <button className="player-settings-button" title="Toggle player settings" onClick={() => setShowOptions(s => !s)}><Settings2 size={18}/> Audio & subtitles <ChevronDown size={14}/></button>
     </header>
 
-    <div className="player-screen">
-      <video ref={videoRef} controls playsInline preload="metadata" autoPlay>
+    <div className="player-screen" ref={screenRef}>
+      <video ref={videoRef} controls controlsList={document.fullscreenEnabled ? 'nofullscreen' : undefined} playsInline preload="metadata">
         {mediaId && subtitleTracks.map(stream => (
           <track key={stream.Index} kind="subtitles"
             srcLang={stream.Language || 'und'}
@@ -249,7 +309,13 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
             src={`/jellyfin/Videos/${encodeURIComponent(item.Id)}/${encodeURIComponent(mediaId)}/Subtitles/${stream.Index}/Stream.vtt`}/>
         ))}
       </video>
-      {status && <div className="player-message"><Clapperboard size={21}/><span>{status}</span></div>}
+      {document.fullscreenEnabled && <button className="player-fullscreen" title={fullscreenLabel}
+        aria-label={fullscreenLabel} onClick={toggleFullscreen}>
+        {fullscreen ? <Minimize size={19}/> : <Maximize size={19}/>}
+      </button>}
+      {(fullscreenError || status) && <div className="player-message" role="status">
+        <Clapperboard size={21}/><span>{fullscreenError || status}</span>
+      </div>}
     </div>
 
     <div className="player-dock">
@@ -264,12 +330,16 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
           <button title="Go back 10 seconds" onClick={() => jump(-10)}><RotateCcw size={18}/> <span>10</span></button>
           <button title={playing ? 'Pause' : 'Play'} className="player-playbutton" onClick={() => {
             const v = videoRef.current;
-            if (!v) return;
-            if (v.paused) v.play().catch(() => setStatus('Playback could not start.'));
+            if (!v || !source) return;
+            if (v.paused) v.play().catch(err => {
+              if (err?.name !== 'AbortError') setStatus('Playback could not start.');
+            });
             else v.pause();
           }}>{playing ? <Pause size={19} fill="currentColor"/> : <Play size={19} fill="currentColor"/>}</button>
           <button title="Go forward 10 seconds" onClick={() => jump(10)}><RotateCw size={18}/> <span>10</span></button>
-          <span className="player-current-mode">{playing ? 'Playing' : 'Paused'} · HLS</span>
+          <span className="player-current-mode" role="status">
+            {loading ? 'Preparing video…' : playing ? 'Playing · HLS' : 'Paused · HLS'}
+          </span>
         </div>
         <div className="player-transport-right">
           <button title="Adjust subtitles" onClick={() => setShowOptions(s => !s)}><Captions size={19}/> Tracks & sync</button>
@@ -315,5 +385,12 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
         </div>
       </div>}
     </div>
+    <dialog ref={exitDialogRef} className="player-exit-dialog" aria-labelledby="player-exit-title">
+      <h2 id="player-exit-title">Leave playback?</h2>
+      <div className="player-exit-actions">
+        <button className="btn btn-ghost" autoFocus onClick={() => exitDialogRef.current?.close()}>Keep watching</button>
+        <button className="btn btn-primary" onClick={onClose}>Return to library</button>
+      </div>
+    </dialog>
   </div>;
 }
