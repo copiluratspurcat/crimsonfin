@@ -1,6 +1,6 @@
 {
   "name": "crimsonfin",
-  "version": "1.0.5",
+  "version": "1.0.7",
   "description": "CrimsonFin — a cinematic desktop client for Jellyfin",
   "author": {
     "name": "copiluratspurcat",
@@ -13,11 +13,10 @@
     "dev": "vite --host 127.0.0.1",
     "start": "npm run build && electron .",
     "build": "vite build",
-    "pack:linux": "npm run build && electron-builder --linux deb AppImage --publish never",
+    "pack:linux": "npm run build && electron-builder --linux deb --x64 --publish never",
     "pack:win": "npm run build && electron-builder --win nsis --publish never",
-    "configure:updates": "node scripts/configure-updates.mjs",
     "release:win": "npm run build && electron-builder --win nsis --publish never",
-    "release:linux": "npm run build && electron-builder --linux deb AppImage --publish never"
+    "release:linux": "npm run build && electron-builder --linux deb --x64 --publish never"
   },
   "dependencies": {
     "hls.js": "^1.6.15",
@@ -44,8 +43,7 @@
     },
     "linux": {
       "target": [
-        "deb",
-        "AppImage"
+        "deb"
       ],
       "category": "AudioVideo",
       "icon": "assets/crimsonfin.png",
@@ -60,19 +58,11 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "allowToChangeInstallationDirectory": false,
       "artifactName": "CrimsonFin-Setup-${version}.${ext}",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "copiluratspurcat",
-        "repo": "crimsonfin-downloads",
-        "releaseType": "release"
-      }
-    ],
     "appImage": {
       "artifactName": "CrimsonFin-${version}-Linux-${arch}.${ext}"
     },

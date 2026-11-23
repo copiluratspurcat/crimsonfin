@@ -107,12 +107,16 @@ async function request(server, pathName, token, options={}) {
 // Updates are supported for installed Windows NSIS builds and Linux AppImages.
 // Debian .deb packages must be updated manually from GitHub Releases.
 let updaterReady = false;
-let updateStatus = { state: 'disabled', message: 'Updates require a Windows installer or Linux AppImage.' };
+let updateStatus = { state: 'disabled', message: 'Private GitHub Releases: install new versions manually from the repository Releases page.' };
 function sendUpdate(state, message, extra = {}) {
   updateStatus = { state, message, ...extra };
   if (win && !win.isDestroyed()) win.webContents.send('updates:status', updateStatus);
 }
 function setupAutoUpdater() {
+  // Private GitHub Releases cannot be queried by other users without authentication.
+  // Do not ship a GitHub token in the application.
+  sendUpdate('disabled', 'Automatic updates are unavailable with private GitHub Releases. Install new versions manually.');
+  return;
   const supported = process.platform === 'win32' || (process.platform === 'linux' && !!process.env.APPIMAGE);
   if (!app.isPackaged || !supported) return;
   try {
