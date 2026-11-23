@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
+import { isTv } from './tv';
 import { buildHlsUrl } from './hls-url';
 import { ArrowLeft, Captions, ChevronDown, Clapperboard, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Settings2, SlidersHorizontal, Volume2 } from 'lucide-react';
 
@@ -58,7 +59,7 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
   const [subtitleDelay, setSubtitleDelay] = useState(0);
   const [autoSync, setAutoSync] = useState(true);
   const [syncState, setSyncState] = useState<{ url: string; ready: boolean } | null>(null);
-  const [showOptions, setShowOptions] = useState(true);
+  const [showOptions, setShowOptions] = useState(!isTv);
   const [clock, setClock] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -164,7 +165,7 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
     }
 
     const desktop = window.crimsonfinFullscreen;
-    if (!windowFullscreenRef.current && !desktop && !/Electron\//i.test(navigator.userAgent)) {
+    if (!windowFullscreenRef.current && !desktop && !isTv && !/Electron\//i.test(navigator.userAgent)) {
       try {
         await screen.requestFullscreen();
         return;
@@ -358,7 +359,7 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
     </header>
 
     <div className={fullscreen ? 'player-screen is-fullscreen' : 'player-screen'} ref={screenRef}>
-      <video ref={videoRef} controls controlsList="nofullscreen" playsInline preload="metadata">
+      <video ref={videoRef} controls={!isTv} controlsList="nofullscreen" playsInline preload="metadata">
         {mediaId && subtitleTracks.map(stream => (
           <track key={`${stream.Index}-${stream.Index === selectedSubtitle?.Index && alignedSubtitle ? syncUrl : 'original'}`} kind="subtitles"
             srcLang={stream.Language || 'und'}
@@ -370,6 +371,7 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
       <button className="player-fullscreen" title={fullscreenLabel}
         aria-label={fullscreenLabel} onClick={toggleFullscreen}>
         {fullscreen ? <Minimize size={19}/> : <Maximize size={19}/>}
+        {isTv && (fullscreen ? 'Exit fullscreen' : 'Fullscreen')}
       </button>
       {status && <div className="player-message" role="status">
         <Clapperboard size={21}/><span>{status}</span>
