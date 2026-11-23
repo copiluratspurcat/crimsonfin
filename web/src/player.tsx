@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
-import { ArrowLeft, Captions, Check, ChevronDown, Clapperboard, MonitorPlay, Pause, Play, RotateCcw, RotateCw, Settings2, SlidersHorizontal, Volume2 } from 'lucide-react';
+import { buildHlsUrl } from './hls-url';
+import { ArrowLeft, Captions, ChevronDown, Clapperboard, Pause, Play, RotateCcw, RotateCw, Settings2, SlidersHorizontal, Volume2 } from 'lucide-react';
 
 type StreamInfo = {
   Index: number;
@@ -37,7 +38,6 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
   const videoRef = useRef<HTMLVideoElement>(null);
   const [detail, setDetail] = useState<Details | null>(null);
   const [status, setStatus] = useState('Preparing your player…');
-  const [direct, setDirect] = useState(false);
   const [quality, setQuality] = useState(12_000_000);
   const [audioChoice, setAudioChoice] = useState('auto');
   const [subtitleChoice, setSubtitleChoice] = useState('auto');
@@ -94,11 +94,10 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
   function delayBy(seconds: number) {
     setSubtitleDelay(d => Math.max(-15, Math.min(15, Math.round((d + seconds) * 4) / 4)));
   }
-  // HLS provides reliable audio-track switching even for MKV files. Direct
-  // playback is disabled when switching to an explicitly selected audio stream.
+  // Always use compatible HLS for Jellyfin's MKV, DTS and E-AC-3 sources.
+  // Direct-playing those files in Chromium can silently remove audio.
   function chooseAudio(value: string) {
     savePosition();
-    if (value !== 'auto') setDirect(false);
     setAudioChoice(value);
   }
 
@@ -109,19 +108,7 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
     let hls: Hls | null = null;
     let started = false;
     let disposed = false;
-    const itemId = encodeURIComponent(item.Id);
-    const params = new URLSearchParams();
-    params.set('VideoCodec', 'h264');
-    params.set('AudioCodec', 'aac');
-    params.set('MaxStreamingBitrate', String(quality));
-    // Captions are displayed as selectable HTML5 WebVTT tracks, not burned
-    // permanently into the video stream.
-    params.set('SubtitleStreamIndex', '-1');
-    params.set('SubtitleMethod', 'External');
-    if (audioChoice !== 'auto') params.set('AudioStreamIndex', audioChoice);
-    const uri = direct && audioChoice === 'auto'
-      ? `/jellyfin/Videos/${itemId}/stream?static=true`
-      : `/jellyfin/Videos/${itemId}/master.m3u8?${params}`;
+    const uri = buildHlsUrl(item.Id, source.Id, quality, audioChoice);
 
     function report(event: 'Playing' | 'Progress' | 'Stopped') {
       if (!started && event !== 'Playing') return;
@@ -130,7 +117,7 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           itemId: item.Id, positionTicks: Math.round((video!.currentTime || 0) * 10_000_000),
-          isPaused: video!.paused, event, method: direct ? 'DirectPlay' : 'Transcode'
+          isPaused: video!.paused, event, method: 'Transcode'
         })
       }).catch(() => {});
     }
@@ -167,19 +154,16 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
     video.addEventListener('ended', onEnded);
     setStatus('Loading stream…');
 
-    if (direct && audioChoice === 'auto') {
-      video.src = uri;
-      video.load();
-    } else if (Hls.isSupported()) {
+    if (Hls.isSupported()) {
       hls = new Hls({ enableWorker: true, backBufferLength: 30, maxBufferLength: 45, lowLatencyMode: false });
       hls.on(Hls.Events.ERROR, (_event, info) => {
-        if (info.fatal) setStatus(`Stream error (${info.type}). Try a lower quality.`);
+        if (info.fatal) setStatus(`Stream error (${info.type}). ${info.details || 'Could not load video.'}`);
       });
       hls.attachMedia(video);
       hls.on(Hls.Events.MEDIA_ATTACHED, () => hls?.loadSource(uri));
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = uri;
-    } else setStatus('HLS is unavailable on this device. Try Direct playback.');
+    } else setStatus('HLS playback is unavailable in this browser.');
 
     const progress = setInterval(() => report('Progress'), 15_000);
     return () => {
@@ -198,7 +182,7 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
       video.removeAttribute('src');
       video.load();
     };
-  }, [item.Id, source?.Id, quality, audioChoice, direct]);
+  }, [item.Id, source?.Id, quality, audioChoice]);
 
   // Shift browser-rendered WebVTT cues without transcoding the video or
   // changing the saved subtitle file. Negative = show subtitle earlier.
@@ -252,7 +236,7 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
     <header className="player-top">
       <button className="player-back" title="Return to library" onClick={onClose}><ArrowLeft size={22}/></button>
       <div className="player-title"><span className="player-eyebrow">NOW PLAYING</span><strong>{item.SeriesName || item.Name}</strong><small>{item.SeriesName ? item.Name : 'CrimsonFin Theater'}</small></div>
-      <span className="player-badge"><span className="player-live"/> {direct ? 'DIRECT' : 'ADAPTIVE HLS'}</span>
+      <span className="player-badge"><span className="player-live"/> HLS · AAC audio</span>
       <button className="player-settings-button" title="Toggle player settings" onClick={() => setShowOptions(s => !s)}><Settings2 size={18}/> Audio & subtitles <ChevronDown size={14}/></button>
     </header>
 
@@ -285,7 +269,7 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
             else v.pause();
           }}>{playing ? <Pause size={19} fill="currentColor"/> : <Play size={19} fill="currentColor"/>}</button>
           <button title="Go forward 10 seconds" onClick={() => jump(10)}><RotateCw size={18}/> <span>10</span></button>
-          <span className="player-current-mode">{playing ? 'Playing' : 'Paused'} · {direct ? 'Direct' : 'HLS'}</span>
+          <span className="player-current-mode">{playing ? 'Playing' : 'Paused'} · HLS</span>
         </div>
         <div className="player-transport-right">
           <button title="Adjust subtitles" onClick={() => setShowOptions(s => !s)}><Captions size={19}/> Tracks & sync</button>
@@ -310,18 +294,14 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
           </select>
         </label>
         <label className="player-field"><span><SlidersHorizontal size={14}/> QUALITY</span>
-          <select value={quality} disabled={direct} onChange={e => { savePosition(); setQuality(Number(e.target.value)); }}>
+          <select value={quality} onChange={e => { savePosition(); setQuality(Number(e.target.value)); }}>
             <option value={4_000_000}>4 Mbps · Data saver</option>
             <option value={8_000_000}>8 Mbps · HD</option>
             <option value={12_000_000}>12 Mbps · Full HD</option>
             <option value={20_000_000}>20 Mbps · High</option>
           </select>
         </label>
-        <label className="player-field player-mode"><span><MonitorPlay size={14}/> PLAYBACK MODE</span>
-          <button className={direct ? 'player-mode-active' : ''} onClick={() => { savePosition(); setDirect(d => !d); }} disabled={audioChoice !== 'auto'}>
-            {direct ? 'Direct playback' : 'Adaptive streaming'} <Check size={14}/>
-          </button>
-        </label>
+
         <div className="player-sync-control">
           <div className="player-sync-top"><span><Captions size={14}/> SUBTITLE TIMING OFFSET</span><strong>{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(2)}s</strong></div>
           <div className="player-sync-inputs">

@@ -65,7 +65,7 @@ export function createFilelistService({ env, db, crypto, downloadManager, fetchI
     if (cached && cached.until > Date.now()) {
       // Authenticated admins still need link ownership for the subsequent torrent download.
       if (cached.links) for (const [id, link] of cached.links) {
-        downloadLinks.set(userId + ':' + id, { link, until: cached.until, sizeBytes: parseTorrentSizeBytes(cached.value.results.find(x => x.id === id)?.size) });
+        downloadLinks.set(userId + ':' + id, { link, until: cached.until, sizeBytes: parseTorrentSizeBytes(cached.value.results.find(x => x.id === id)?.size), name: cached.value.results.find(x => x.id === id)?.name || '' });
       }
       return cached.value;
     }
@@ -98,7 +98,7 @@ export function createFilelistService({ env, db, crypto, downloadManager, fetchI
       const until = Date.now() + 300000;
       const value = { configured: true, source: 'api', results: parsed.results };
       searchCache.set(key, { value, until, links: parsed.links });
-      for (const [id, link] of parsed.links) downloadLinks.set(userId + ':' + id, { link, until, sizeBytes: parseTorrentSizeBytes(parsed.results.find(x => x.id === id)?.size) });
+      for (const [id, link] of parsed.links) downloadLinks.set(userId + ':' + id, { link, until, sizeBytes: parseTorrentSizeBytes(parsed.results.find(x => x.id === id)?.size), name: parsed.results.find(x => x.id === id)?.name || '' });
       if (downloadLinks.size > 500) {
         for (const [id, val] of downloadLinks) if (val.until < Date.now()) downloadLinks.delete(id);
       }
@@ -135,7 +135,7 @@ export function createFilelistService({ env, db, crypto, downloadManager, fetchI
     // Validate and obtain the tracker torrent before writing anything.
     const torrent = await torrentFor(userId, torrentId);
     const metadata = downloadLinks.get(userId + ':' + torrentId);
-    return downloadManager.queueTorrentFile(torrent, kind, metadata?.sizeBytes || 0);
+    return downloadManager.queueTorrentFile(torrent, kind, metadata?.sizeBytes || 0, metadata?.name || '');
   }
   return { status, configure, search, torrentFor, queueTorrent };
 }

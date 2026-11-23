@@ -263,3 +263,31 @@ Only administrators can queue or see the qBittorrent status. Credentials
 stay private on the backend. The local downloader is not exposed via Funnel.
 Unit tests use simulated torrents and fake qBittorrent responses; a true
 live download test must be separately approved before modifying live data.
+
+## CrimsonFin v2.4 – playable Jellyfin HLS and TV series organization
+
+Playback uses compatible HLS by default (H.264 video + AAC audio) and always
+sends Jellyfin's mandatory `MediaSourceId` with the master playlist request.
+This resolves the HTTP 400/networkError which affected MKV episodes in Jellyfin
+12. Direct Play has been removed from the desktop player because browsers can
+display video but silently reject unsupported MKV E-AC-3/DTS audio. You can
+still select any available Jellyfin audio stream and Romanian subtitles.
+
+New torrents are inspected by their bencoded file list. Episode patterns
+(`S01E01`) and numbered season packs are automatically treated as TV shows
+even if mistakenly selected as movies. New single-season shows are saved into
+the same existing Jellyfin series library under `Shows/Show Title/Season 01`
+(or the appropriate season number), with `contentLayout=NoSubfolder` so
+individual episode files sit directly in the Season folder, not in an extra
+tracker release folder. The download manager selects the media drive with the
+most unreserved free space. Multi-season packs are rejected with a helpful
+message rather than silently misfiled.
+
+Existing misfiled shows can be repaired through qBittorrent's tracked-file
+rename and move endpoints, preserving the torrent and download progress.
+One-time migration tooling and its audit logs remain private on the server
+and are intentionally not included in the public GitHub repository.
+
+File metadata identification may still be inaccurate until Jellyfin rescans
+the series or an administrator identifies the correct series. Episode
+availability for torrents that are still downloading is not guaranteed.

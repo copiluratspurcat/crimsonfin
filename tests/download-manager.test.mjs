@@ -47,17 +47,20 @@ test('Authenticated qBittorrent queue sets the proper Movies or Shows savepath',
       assert.equal(init.method,'POST');
       assert.equal(init.body.get('stopped'),'false');
       assert.equal(init.body.get('autoTMM'),'false');
+      assert.equal(init.body.get('contentLayout'),'NoSubfolder');
       paths.push(init.body.get('savepath'));
       return new Response('Ok.');
     }
     throw new Error('Unexpected WebUI method '+u.pathname);
   };
-  const client=createDownloadManager({env,fetchImpl:fakeFetch,storageProvider:()=>drives});
-  const result=await client.queueTorrentFile(Buffer.from('d3:foo3:bare'), 'series', 12*GiB);
+  const client=createDownloadManager({env,fetchImpl:fakeFetch,storageProvider:()=>drives,ensureSeriesFolder:()=>{}});
+  const filename='Test.Series.S01E01.mkv';
+  const metadata=Buffer.from('d4:infod4:name'+Buffer.byteLength(filename)+':'+filename+'6:lengthi1024eee');
+  const result=await client.queueTorrentFile(metadata, 'series', 12*GiB, 'Test.Series.S01.1080p');
   assert.equal(result.queued,true);
   assert.equal(result.drive,'WD1TBLU','unfinished downloads reserve space');
-  assert.equal(result.folder,'/mnt/WD1TBLU/shows');
-  assert.deepEqual(paths,['/mnt/WD1TBLU/shows']);
+  assert.equal(result.folder,'/mnt/WD1TBLU/shows/Test Series/Season 01');
+  assert.deepEqual(paths,['/mnt/WD1TBLU/shows/Test Series/Season 01']);
   assert.equal(loginCount,1,'qBittorrent session reused');
   const status=await client.status();
   assert.equal(status.online,true);

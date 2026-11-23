@@ -1,5 +1,6 @@
-import { accessSync, constants, realpathSync, statSync, statfsSync } from 'node:fs';
+import { accessSync, constants, realpathSync, statSync, statfsSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import { classifyTorrent, safeSeriesDestination } from './media-layout.mjs';
 
 const GiB = 1024 ** 3;
 const SAFE_MARGIN = 2 * GiB;
@@ -92,7 +93,16 @@ export function chooseStorage(drives, kind, requiredBytes = 0, reserved = {}) {
   return { drive: best.name, savePath: best[kind + 'Folder'], availableBytes: best.usableBytes };
 }
 
-export function createDownloadManager({ env, fetchImpl = fetch, storageProvider = getStorageReport }) {
+export function createDownloadManager({
+  env, fetchImpl = fetch, storageProvider = getStorageReport,
+  ensureSeriesFolder = target => {
+    if (existsSync(target)) {
+      if (realpathSync(target) !== target || !statSync(target).isDirectory()) {
+        throw invalid('Unsafe existing TV series directory', 400);
+      }
+    } else mkdirSync(target, { recursive: true, mode: 0o775 });
+  }
+}) {
   const url = new URL(env.QBIT_URL || 'http://127.0.0.1:8877');
   if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '::1'].includes(url.hostname) ||
       url.username || url.password || url.search || url.hash) {
@@ -176,10 +186,11 @@ export function createDownloadManager({ env, fetchImpl = fetch, storageProvider 
         error: err.status === 503 ? 'qBittorrent is not configured' : 'qBittorrent is currently unavailable' };
     }
   }
-  async function queueTorrentFile(torrent, kind, sizeBytes = 0) {
+  async function queueTorrentFile(torrent, kind, sizeBytes = 0, releaseName = '') {
     if (!Buffer.isBuffer(torrent) || torrent.length < 10 || torrent.length > 5_000_000 || torrent[0] !== 0x64) {
       throw invalid('Invalid torrent metadata', 400);
     }
+    const classification = classifyTorrent(torrent, releaseName, kind);
     const drives = storageProvider(env);
     const raw = await listRaw();
     const reserved = Object.create(null);
@@ -187,16 +198,31 @@ export function createDownloadManager({ env, fetchImpl = fetch, storageProvider 
       const d = driveForSavePath(t.save_path, drives);
       if (d) reserved[d.id] = (reserved[d.id] || 0) + clamp(t.amount_left || 0, 10 ** 15);
     }
-    const selected = chooseStorage(drives, kind, sizeBytes, reserved);
+    const selected = chooseStorage(drives, classification.kind, sizeBytes, reserved);
+    let savePath = selected.savePath;
+    if (classification.kind === 'series') {
+      if (classification.multipleSeasons || !Number.isInteger(classification.seasonNumber)) {
+        throw invalid('This release contains multiple seasons. Queue individual seasons so Jellyfin can organize them correctly.', 400);
+      }
+      const showFolder = safeSeriesDestination(selected.savePath, classification.title);
+      // Jellyfin explicitly requires Season 01/Season 02 under each series.
+      savePath = path.join(showFolder, 'Season ' + String(classification.seasonNumber).padStart(2, '0'));
+      ensureSeriesFolder(showFolder);
+      ensureSeriesFolder(savePath);
+    }
     const body = new FormData();
     body.append('torrents', new Blob([torrent], { type: 'application/x-bittorrent' }), 'release.torrent');
-    body.append('savepath', selected.savePath);
+    body.append('savepath', savePath);
+    // A TV pack's torrent root is a release folder; remove that extra layer
+    // and place all episode files directly under Shows/Series Title.
+    if (classification.kind === 'series') body.append('contentLayout', 'NoSubfolder');
     body.append('autoTMM', 'false');
     body.append('stopped', 'false');
     const response = await api('/api/v2/torrents/add', { method: 'POST', body });
     if ((await response.text()).trim() !== 'Ok.') throw invalid('qBittorrent rejected the torrent', 502);
-    return { ok: true, queued: true, kind, drive: selected.drive,
-      folder: selected.savePath, availableBytes: selected.availableBytes };
+    return { ok: true, queued: true, kind: classification.kind,
+      classifiedAsShow: classification.detectedSeries,
+      drive: selected.drive, folder: savePath, availableBytes: selected.availableBytes };
   }
   return { status, downloads, queueTorrentFile, listRaw };
 }
