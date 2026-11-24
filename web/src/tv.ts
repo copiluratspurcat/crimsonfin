@@ -10,7 +10,8 @@ function focusable(element: HTMLElement) {
     && getComputedStyle(element).visibility === 'visible';
 }
 function region() {
-  return document.querySelector<HTMLElement>('dialog[open]') || document.querySelector<HTMLElement>('.player-page, .details-panel');
+  return document.querySelector<HTMLElement>('dialog[open]') || document.querySelector<HTMLElement>('.card-menu-panel')
+    || document.querySelector<HTMLElement>('.player');
 }
 function controls() {
   return [...(region() || document).querySelectorAll<HTMLElement>(selector)].filter(focusable);
@@ -41,7 +42,7 @@ export function enableTvNavigation() {
     const focused = document.activeElement;
     if (!(focused instanceof HTMLElement) || !focused.matches(selector) || !focusable(focused)
       || (currentRegion && !currentRegion.contains(focused))) {
-      focus(controls().find(el => el.matches('.player-fullscreen, .login-card input, .btn-primary')) || controls()[0]);
+      focus(controls().find(el => el.matches('.player-icon.main, .login-card input, .btn.primary')) || controls()[0]);
     }
   };
   const observer = new MutationObserver(ensureFocus);
@@ -50,7 +51,9 @@ export function enableTvNavigation() {
     const active = document.activeElement;
     if (event.key === 'Escape') {
       const dialog = document.querySelector<HTMLDialogElement>('dialog[open]');
-      const details = document.querySelector<HTMLButtonElement>('.details-panel .modal-close');
+      // The player handles its own Back (exit prompt); otherwise Back leaves the details page.
+      if (!dialog && document.querySelector('.player')) return;
+      const details = document.querySelector<HTMLButtonElement>('.details [data-back]');
       if (dialog || details) {
         event.preventDefault();
         event.stopPropagation();

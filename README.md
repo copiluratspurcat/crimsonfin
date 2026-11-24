@@ -195,6 +195,30 @@ The audit uses a 7-day cooldown for failed attempts, never overwrites files,
 never machine-translates English, and exposes a progress summary only to
 Jellyfin admins in CrimsonFin's admin panel.
 
+#### Local OpenSubtitles dataset (no daily download limit)
+
+OpenSubtitles' API allows only a handful of downloads per day. The audit can
+instead look subtitles up in a local copy of the published opensubtitles.org
+dataset ([milahu/opensubtitles-scraper](https://github.com/milahu/opensubtitles-scraper)),
+entirely on disk. It is tried before the online providers, and each scan may
+check up to `--local-limit` titles (default 200).
+
+1. **Subtitle files.** Download the dump releases (torrents listed in that
+   repository's `release/` folder). Each release is one SQLite file such as
+   `95xxxxx.db` with a `zipfiles(num, name, content)` table. Subtitles of every
+   language are mixed in each release, so Romanian coverage needs all of them
+   (roughly 160–200 GB). Releases lag behind the live site.
+2. **Index.** Download `subtitles_all.txt.gz` from OpenSubtitles' export page and
+   build `subtitles_all.db` with that repository's
+   `subtitles_all.txt.gz-parse.py` (table `subz_metadata`).
+3. **Configure** `OPENSUBS_METADATA_DB` and `OPENSUBS_DUMP_DIRS` in `.env`.
+
+Matching uses Jellyfin's IMDb ids (the show's IMDb id plus season/episode for
+episodes) and prefers subtitles whose release name matches the video file. Every
+candidate still passes the same Romanian-language and timing checks, and existing
+subtitle files are never overwritten. To fill a backlog in one go:
+`python3 scripts/romanian-subtitle-audit.py --apply --local-limit 2000`
+
 Audit manually: `python3 scripts/romanian-subtitle-audit.py`
 Attempt a few missing subtitles: `python3 scripts/romanian-subtitle-audit.py --apply --limit 4`
 

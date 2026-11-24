@@ -22,8 +22,19 @@ function trustedRemote(raw) {
   } catch {}
   return null;
 }
+// Development only: an unpackaged app may load a local dev server (e.g. Vite at
+// http://127.0.0.1:5173) via CRIMSONFIN_DEV_URL. Packaged builds ignore it.
+function devServer(raw) {
+  if (app.isPackaged || !raw) return null;
+  try {
+    const u = new URL(raw);
+    if (u.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(u.hostname) && u.pathname === '/' && !u.search) return u.origin;
+  } catch {}
+  return null;
+}
 const config = getConfig();
-const remote = trustedRemote(process.env.CRIMSONFIN_URL || config.url);
+const dev = devServer(process.env.CRIMSONFIN_DEV_URL);
+const remote = dev || trustedRemote(process.env.CRIMSONFIN_URL || config.url);
 let approvedLocalOrigin = null;
 
 
@@ -58,12 +69,12 @@ function unavailable(win) {
 }
 async function makeWindow() {
   // LAN-first with a strictly pinned HTTPS certificate; remote is the fallback.
-  const availableLocal = await probeLocal(config);
+  const availableLocal = dev ? null : await probeLocal(config);
   approvedLocalOrigin = availableLocal;
   const origin = availableLocal || remote;
   const win = new BrowserWindow({
     width: 1440, height: 900, minWidth: 850, minHeight: 580,
-    backgroundColor: '#0b1019', title: 'CrimsonFin', show: false,
+    backgroundColor: '#0e0d10', title: 'CrimsonFin', show: false, icon: path.join(__dirname, 'icon.png'),
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.cjs'), partition: 'persist:crimsonfin' }
   });
   win.once('ready-to-show', () => win.show());

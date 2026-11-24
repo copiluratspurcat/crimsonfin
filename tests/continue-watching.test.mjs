@@ -15,3 +15,10 @@ test('resume entries win over identical Next Up episodes and alternate copies', 
     { ...resume, UserData: {} }, { ...resume, Id: 'copy' }, otherSeason, otherSeries, combined, noMetadata
   ]), [resume, otherSeason, otherSeries, combined, noMetadata]);
 });
+
+test('a Next Up episode already covered by a resumed multi-episode file is dropped', () => {
+  const resumeMulti = { Id: 'e1-2', Type: 'Episode', SeriesId: 'show', ParentIndexNumber: 1, IndexNumber: 1, IndexNumberEnd: 2 };
+  const nextSingle = { Id: 'e2', Type: 'Episode', SeriesId: 'show', ParentIndexNumber: 1, IndexNumber: 2 };
+  const nextThird = { ...nextSingle, Id: 'e3', IndexNumber: 3 };
+  assert.deepEqual(uniqueWatchEntries([resumeMulti], [nextSingle, nextThird]), [resumeMulti, nextThird]);
+});

@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { isTv } from './tv';
 import { buildHlsUrl } from './hls-url';
-import { ArrowLeft, Captions, ChevronDown, Clapperboard, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Settings2, SlidersHorizontal, Volume2 } from 'lucide-react';
+import { ArrowLeft, Captions, Clapperboard, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Settings2, SkipForward, SlidersHorizontal, Volume2, VolumeX, X } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { api, itemArt, type PageResult } from './lib';
+import { languageKey, setPrefs, usePrefs } from './prefs';
 
 type StreamInfo = {
   Index: number;
@@ -15,7 +18,9 @@ type StreamInfo = {
   DeliveryMethod?: string;
 };
 type MediaSource = { Id: string; MediaStreams?: StreamInfo[]; DefaultAudioStreamIndex?: number; DefaultSubtitleStreamIndex?: number };
-type PlayerItem = { Id: string; Name: string; SeriesName?: string; UserData?: { PlaybackPositionTicks?: number } };
+type PlayerItem = { Id: string; Name: string; Type?: string; SeriesId?: string; SeriesName?: string; ParentIndexNumber?: number; IndexNumber?: number;
+  ImageTags?: { Primary?: string }; UserData?: { PlaybackPositionTicks?: number } };
+type Segments = { intro: { start: number; end: number } | null; credits: { start: number; end: number } | null };
 type Details = PlayerItem & { MediaSources?: MediaSource[] };
 const ROMANIAN = new Set(['ron', 'rum', 'ro', 'ro-ro']);
 const TEXT_SUBS = new Set(['subrip', 'srt', 'webvtt', 'vtt', 'ass', 'ssa', 'mov_text', 'ttml']);
@@ -44,7 +49,8 @@ declare global {
   }
 }
 
-export function Player({ item, onClose }: { item: PlayerItem; onClose: () => void }) {
+export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: () => void; onNext?: (next: PlayerItem) => void }) {
+  const prefs = usePrefs();
   const videoRef = useRef<HTMLVideoElement>(null);
   const screenRef = useRef<HTMLDivElement>(null);
   const exitDialogRef = useRef<HTMLDialogElement>(null);
@@ -59,7 +65,12 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
   const [subtitleDelay, setSubtitleDelay] = useState(0);
   const [autoSync, setAutoSync] = useState(true);
   const [syncState, setSyncState] = useState<{ url: string; ready: boolean } | null>(null);
-  const [showOptions, setShowOptions] = useState(!isTv);
+  const [showOptions, setShowOptions] = useState(false);
+  const [volume, setVolume] = useState(1);
+  const [muted, setMuted] = useState(false);
+  const [idle, setIdle] = useState(false);
+  const [hover, setHover] = useState<{ x: number; time: number } | null>(null);
+  const lastSubtitleRef = useRef('auto');
   const [clock, setClock] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -96,7 +107,9 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
   const streams = source?.MediaStreams || [];
   const audioTracks = useMemo(() => streams.filter(s => s.Type === 'Audio'), [streams]);
   const subtitleTracks = useMemo(() => streams.filter(isSubtitleUsable), [streams]);
-  const autoSubtitle = subtitleTracks.find(s => ROMANIAN.has((s.Language || '').toLowerCase()));
+  // 'Auto' follows the remembered subtitle language (Romanian unless changed in Settings or the player).
+  const autoSubtitle = prefs.subtitleLanguage === 'off' ? undefined
+    : subtitleTracks.find(s => languageKey(s.Language) === prefs.subtitleLanguage);
   const activeSubtitle = subtitleChoice === 'auto'
     ? autoSubtitle?.Index.toString() ?? 'off'
     : subtitleChoice;
@@ -109,6 +122,54 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
     ? `/api/subtitle-sync/${encodeURIComponent(item.Id)}/${encodeURIComponent(source.Id)}/${selectedSubtitle.Index}/${audioIndex}`
     : null;
   const alignedSubtitle = syncState?.url === syncUrl && syncState?.ready;
+
+  // Remember an explicit subtitle choice as the preferred language for next time.
+  function chooseSubtitle(value: string) {
+    setSubtitleChoice(value);
+    if (value === 'off') setPrefs({ subtitleLanguage: 'off' });
+    else if (value !== 'auto') {
+      const lang = languageKey(subtitleTracks.find(s => String(s.Index) === value)?.Language);
+      if (lang) setPrefs({ subtitleLanguage: lang });
+    }
+  }
+
+  // Intro / credits markers (when the server has them) and the next episode of a series.
+  const segments = useQuery({ queryKey: ['segments', item.Id], staleTime: Infinity, retry: 0,
+    queryFn: () => api<Segments>(`/api/items/${encodeURIComponent(item.Id)}/segments`) }).data;
+  const episodes = useQuery({ queryKey: ['player-episodes', item.SeriesId], staleTime: 5 * 60_000,
+    enabled: item.Type === 'Episode' && !!item.SeriesId,
+    queryFn: () => api<PageResult>(`/api/series/${encodeURIComponent(item.SeriesId!)}/episodes`) }).data;
+  const nextEpisode = useMemo(() => {
+    const list = episodes?.Items ?? [];
+    const at = list.findIndex(e => e.Id === item.Id);
+    return at >= 0 ? list[at + 1] : undefined;
+  }, [episodes, item.Id]);
+  const [ended, setEnded] = useState(false);
+  const [dismissedNext, setDismissedNext] = useState(false);
+  const [countdown, setCountdown] = useState(10);
+  const credits = segments?.credits;
+  const inCredits = !!credits && clock >= credits.start && (!duration || clock < duration - 1);
+  const showNext = !!nextEpisode && !!onNext && !dismissedNext && (ended || inCredits);
+  const autoNext = showNext && prefs.autoplayNext;
+  useEffect(() => {
+    if (!autoNext) return;
+    setCountdown(10);
+    const timer = setInterval(() => setCountdown(c => c - 1), 1000);
+    return () => clearInterval(timer);
+  }, [autoNext]);
+  useEffect(() => { if (autoNext && countdown <= 0 && nextEpisode) onNext?.(nextEpisode); }, [autoNext, countdown, nextEpisode, onNext]);
+  const intro = segments?.intro;
+  const inIntro = !!intro && clock >= intro.start && clock < intro.end - 1;
+  function skipIntro() {
+    const v = videoRef.current;
+    if (v && intro) { v.currentTime = intro.end; setClock(intro.end); }
+  }
+
+  const audioTrack = audioTracks.find(t => t.Index === audioIndex);
+  const channels = audioTrack?.DisplayTitle?.match(/\b(\d\.\d)\b/)?.[1];
+  // Prefer 'English 5.1'; without a language code fall back to Jellyfin's display title.
+  const audioLabel = !audioTrack ? '' : audioTrack.Language ? [languageLabel(audioTrack.Language), channels].filter(Boolean).join(' ')
+    : (audioTrack.DisplayTitle || audioTrack.Codec || '').split(' - ').slice(0, 2).join(' ').slice(0, 28);
 
   useEffect(() => {
     if (!syncUrl) return;
@@ -218,6 +279,7 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
     }
     const onPlaying = () => {
       started = true;
+      setEnded(false);
       setPlaying(true);
       setLoading(false);
       setStatus('');
@@ -249,7 +311,7 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
         else onError();
       });
     };
-    const onEnded = () => report('Stopped');
+    const onEnded = () => { setEnded(true); report('Stopped'); };
     video.addEventListener('playing', onPlaying);
     video.addEventListener('pause', onPaused);
     video.addEventListener('error', onError);
@@ -333,33 +395,88 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
           void toggleFullscreen();
           return;
         }
+        if (showOptions) { e.preventDefault(); setShowOptions(false); return; }
         if (document.fullscreenElement || !exitDialog || exitDialog.open) return;
         e.preventDefault();
         exitDialog.showModal();
         return;
       }
       if (exitDialog?.open) return;
-      if (e.target instanceof HTMLElement &&
-          ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName)) return;
-      if (e.key === 'ArrowLeft') { e.preventDefault(); jump(-10); }
-      if (e.key === 'ArrowRight') { e.preventDefault(); jump(10); }
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const onButton = target?.tagName === 'BUTTON';
+      const key = e.key.toLowerCase();
+      // Space/Enter on a focused button should press that button, not toggle playback.
+      if ((key === ' ' || key === 'k') && !onButton) { e.preventDefault(); togglePlay(); }
+      else if (key === 'f') { e.preventDefault(); void toggleFullscreen(); }
+      else if (key === 'm') { e.preventDefault(); toggleMute(); }
+      else if (key === 'c') { e.preventDefault(); toggleSubtitles(); }
+      else if (key === 'n' && nextEpisode && onNext) { e.preventDefault(); onNext(nextEpisode); }
+      else if (onButton) return;
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); jump(-10); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); jump(10); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); changeVolume(0.1); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); changeVolume(-0.1); }
     };
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
-  }, [toggleFullscreen]);
+  });
+
+  // Controls hide after a few seconds of no mouse/remote activity while playing.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const wake = () => {
+      setIdle(false);
+      clearTimeout(timer);
+      timer = setTimeout(() => setIdle(true), isTv ? 5000 : 3000);
+    };
+    wake();
+    window.addEventListener('mousemove', wake);
+    window.addEventListener('pointerdown', wake);
+    window.addEventListener('keydown', wake, true);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('mousemove', wake);
+      window.removeEventListener('pointerdown', wake);
+      window.removeEventListener('keydown', wake, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.volume = volume;
+    v.muted = muted;
+  }, [volume, muted, source?.Id]);
+
+  function togglePlay() {
+    const v = videoRef.current;
+    if (!v || !source) return;
+    if (v.paused) v.play().catch(err => { if (err?.name !== 'AbortError') setStatus('Playback could not start.'); });
+    else v.pause();
+  }
+  function toggleMute() { setMuted(m => !m); }
+  function changeVolume(delta: number) {
+    setMuted(false);
+    setVolume(v => Math.max(0, Math.min(1, Math.round((v + delta) * 10) / 10)));
+  }
+  function toggleSubtitles() {
+    if (activeSubtitle === 'off') setSubtitleChoice(lastSubtitleRef.current === 'off' ? 'auto' : lastSubtitleRef.current);
+    else { lastSubtitleRef.current = subtitleChoice; setSubtitleChoice('off'); }
+  }
 
   const mediaId = source?.Id;
-  const fullscreenLabel = fullscreen ? 'Exit fullscreen' : 'Enter fullscreen';
-  return <div className="player-page" role="dialog" aria-label={`Playing ${item.Name}`} aria-modal="true">
-    <header className="player-top">
-      <button className="player-back" title="Return to library" onClick={onClose}><ArrowLeft size={22}/></button>
-      <div className="player-title"><span className="player-eyebrow">NOW PLAYING</span><strong>{item.SeriesName || item.Name}</strong><small>{item.SeriesName ? item.Name : 'CrimsonFin Theater'}</small></div>
-      <span className="player-badge"><span className="player-live"/> HLS · AAC audio</span>
-      <button className="player-settings-button" title="Toggle player settings" onClick={() => setShowOptions(s => !s)}><Settings2 size={18}/> Audio & subtitles <ChevronDown size={14}/></button>
-    </header>
-
-    <div className={fullscreen ? 'player-screen is-fullscreen' : 'player-screen'} ref={screenRef}>
-      <video ref={videoRef} controls={!isTv} controlsList="nofullscreen" playsInline preload="metadata">
+  const fullscreenLabel = fullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)';
+  const subtitleLabel = selectedSubtitle ? `Subtitles: ${languageLabel(selectedSubtitle.Language)} (C)` : 'Subtitles off (C)';
+  const max = Math.max(1, duration);
+  const hidden = idle && playing && !showOptions && !status;
+  const cueClass = `cue-${prefs.subtitleSize} cue-bg-${prefs.subtitleBackground}`;
+  return <div className={`player ${cueClass}${hidden ? ' idle' : ''}`} role="dialog" aria-label={`Playing ${item.Name}`} aria-modal="true">
+    <div className={fullscreen ? 'player-screen is-fullscreen' : 'player-screen'} ref={screenRef}
+      onClick={e => { if (!isTv && e.target === videoRef.current) togglePlay(); }}
+      onDoubleClick={e => { if (!isTv && e.target === videoRef.current) void toggleFullscreen(); }}>
+      <video ref={videoRef} playsInline preload="metadata">
         {mediaId && subtitleTracks.map(stream => (
           <track key={`${stream.Index}-${stream.Index === selectedSubtitle?.Index && alignedSubtitle ? syncUrl : 'original'}`} kind="subtitles"
             srcLang={stream.Language || 'und'}
@@ -368,93 +485,120 @@ export function Player({ item, onClose }: { item: PlayerItem; onClose: () => voi
               ? syncUrl : `/jellyfin/Videos/${encodeURIComponent(item.Id)}/${encodeURIComponent(mediaId)}/Subtitles/${stream.Index}/Stream.vtt`}/>
         ))}
       </video>
-      <button className="player-fullscreen" title={fullscreenLabel}
-        aria-label={fullscreenLabel} onClick={toggleFullscreen}>
-        {fullscreen ? <Minimize size={19}/> : <Maximize size={19}/>}
-        {isTv && (fullscreen ? 'Exit fullscreen' : 'Fullscreen')}
-      </button>
-      {status && <div className="player-message" role="status">
-        <Clapperboard size={21}/><span>{status}</span>
+      {(status || loading) && <div className="player-message" role="status">
+        {status ? <><Clapperboard aria-hidden/><span>{status}</span></> : <span className="spinner" aria-label="Preparing video"/>}
       </div>}
-    </div>
 
-    <div className="player-dock">
-      <div className="player-timeline">
-        <span>{formatTime(clock)}</span>
-        <input type="range" min={0} max={Math.max(1, duration)} step={0.25} value={Math.min(clock, Math.max(1, duration))}
-          aria-label="Playback position" onChange={e => { const v=videoRef.current; if (v) v.currentTime=Number(e.target.value); setClock(Number(e.target.value)); }}/>
-        <span>{formatTime(duration)}</span>
-      </div>
-      <div className="player-transport">
-        <div className="player-transport-left">
-          <button title="Go back 10 seconds" onClick={() => jump(-10)}><RotateCcw size={18}/> <span>10</span></button>
-          <button title={playing ? 'Pause' : 'Play'} className="player-playbutton" onClick={() => {
-            const v = videoRef.current;
-            if (!v || !source) return;
-            if (v.paused) v.play().catch(err => {
-              if (err?.name !== 'AbortError') setStatus('Playback could not start.');
-            });
-            else v.pause();
-          }}>{playing ? <Pause size={19} fill="currentColor"/> : <Play size={19} fill="currentColor"/>}</button>
-          <button title="Go forward 10 seconds" onClick={() => jump(10)}><RotateCw size={18}/> <span>10</span></button>
-          <span className="player-current-mode" role="status">
-            {loading ? 'Preparing video…' : playing ? 'Playing · HLS' : 'Paused · HLS'}
-          </span>
+      <header className="player-top">
+        <button className="player-icon" title="Back (Esc)" aria-label="Back to library" onClick={onClose}><ArrowLeft aria-hidden/></button>
+        <div className="player-title"><strong>{item.SeriesName || item.Name}</strong>
+          {item.SeriesName && <small>{item.Name}</small>}</div>
+        <span className="player-badge"><i className="dot dot-green" aria-hidden/>{loading ? 'Preparing…' : [audioLabel, `${quality / 1_000_000} Mbps`].filter(Boolean).join(' · ')}</span>
+      </header>
+
+      <div className="player-bottom">
+        <div className="seek" onMouseMove={e => {
+          if (isTv) return;
+          const r = e.currentTarget.getBoundingClientRect();
+          const x = Math.max(0, Math.min(r.width, e.clientX - r.left));
+          setHover({ x, time: (x / r.width) * max });
+        }} onMouseLeave={() => setHover(null)}>
+          {hover && duration > 0 && <span className="seek-preview" style={{ left: hover.x }}>{formatTime(hover.time)}</span>}
+          <input type="range" min={0} max={max} step={0.25} value={Math.min(clock, max)} aria-label="Playback position"
+            aria-valuetext={`${formatTime(clock)} of ${formatTime(duration)}`}
+            style={{ '--played': `${(Math.min(clock, max) / max) * 100}%` } as React.CSSProperties}
+            onChange={e => { const v = videoRef.current; if (v) v.currentTime = Number(e.target.value); setClock(Number(e.target.value)); }}/>
         </div>
-        <div className="player-transport-right">
-          <button title="Adjust subtitles" onClick={() => setShowOptions(s => !s)}><Captions size={19}/> Tracks & sync</button>
+        <div className="player-controls">
+          <div className="group">
+            <button className="player-icon main" title={playing ? 'Pause (Space)' : 'Play (Space)'} aria-label={playing ? 'Pause' : 'Play'}
+              autoFocus={isTv} onClick={togglePlay}>{playing ? <Pause fill="currentColor" aria-hidden/> : <Play fill="currentColor" aria-hidden/>}</button>
+            <button className="player-icon" title="Back 10 seconds (←)" aria-label="Back 10 seconds" onClick={() => jump(-10)}><RotateCcw aria-hidden/></button>
+            <button className="player-icon" title="Forward 10 seconds (→)" aria-label="Forward 10 seconds" onClick={() => jump(10)}><RotateCw aria-hidden/></button>
+            {!isTv && <span className="volume">
+              <button className="player-icon" title={muted ? 'Unmute (M)' : 'Mute (M)'} aria-label={muted ? 'Unmute' : 'Mute'} onClick={toggleMute}>
+                {muted || volume === 0 ? <VolumeX aria-hidden/> : <Volume2 aria-hidden/>}</button>
+              <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} aria-label="Volume"
+                style={{ '--played': `${(muted ? 0 : volume) * 100}%` } as React.CSSProperties}
+                onChange={e => { setMuted(false); setVolume(Number(e.target.value)); }}/>
+            </span>}
+            <span className="time">{formatTime(clock)} / {formatTime(duration)}</span>
+          </div>
+          <div className="group">
+            {nextEpisode && onNext && <button className="player-icon" title="Next episode (N)" aria-label="Next episode" onClick={() => onNext(nextEpisode)}>
+              <SkipForward aria-hidden/>{isTv && <span>Next</span>}</button>}
+            <button className={selectedSubtitle ? 'player-icon on' : 'player-icon'} title={subtitleLabel} aria-label={subtitleLabel}
+              aria-pressed={!!selectedSubtitle} onClick={toggleSubtitles}><Captions aria-hidden/>{isTv && <span>{selectedSubtitle ? languageLabel(selectedSubtitle.Language) : 'Off'}</span>}</button>
+            <button className={showOptions ? 'player-icon on' : 'player-icon'} title="Audio, subtitles & quality" aria-label="Audio, subtitles and quality"
+              aria-expanded={showOptions} onClick={() => setShowOptions(s => !s)}><Settings2 aria-hidden/>{isTv && <span>Tracks</span>}</button>
+            <button className="player-icon" title={fullscreenLabel} aria-label={fullscreenLabel} onClick={toggleFullscreen}>
+              {fullscreen ? <Minimize aria-hidden/> : <Maximize aria-hidden/>}</button>
+          </div>
         </div>
       </div>
-      {showOptions && <div className="player-control-grid">
-        <label className="player-field"><span><Volume2 size={14}/> AUDIO TRACK</span>
+
+      {inIntro && !showNext && <button className="skip-intro" autoFocus={isTv} onClick={skipIntro}>Skip intro</button>}
+
+      {showNext && nextEpisode && <section className="up-next" aria-label="Up next" aria-live="polite">
+        <span className="up-next-art"><img src={itemArt(nextEpisode, 'Primary', 400)} alt="" onError={e => { e.currentTarget.style.visibility = 'hidden'; }}/></span>
+        <span className="up-next-text">
+          <small>{autoNext ? `Next episode in ${Math.max(0, countdown)}s` : 'Next episode'}</small>
+          <strong>S{nextEpisode.ParentIndexNumber} · E{nextEpisode.IndexNumber}  {nextEpisode.Name}</strong>
+        </span>
+        <span className="actions">
+          <button className="btn small primary" autoFocus onClick={() => onNext?.(nextEpisode)}><Play fill="currentColor" aria-hidden/> Play now</button>
+          <button className="btn small" onClick={() => setDismissedNext(true)}>{autoNext ? 'Cancel' : 'Dismiss'}</button>
+        </span>
+      </section>}
+
+      {showOptions && <section className="player-panel" aria-label="Playback options">
+        <header><strong>Playback options</strong>
+          <button className="player-icon" aria-label="Close options" onClick={() => setShowOptions(false)}><X aria-hidden/></button></header>
+        <label className="field"><span><Volume2 aria-hidden/> Audio</span>
           <select value={audioChoice} onChange={e => chooseAudio(e.target.value)} disabled={!source}>
             <option value="auto">Default track</option>
             {audioTracks.map(a => <option key={a.Index} value={String(a.Index)}>
               {languageLabel(a.Language)} · {a.DisplayTitle || a.Codec || 'Audio'} {a.IsDefault ? '(Default)' : ''}
             </option>)}
-          </select>
-        </label>
-        <label className="player-field"><span><Captions size={14}/> SUBTITLES</span>
-          <select value={subtitleChoice} onChange={e => { setSubtitleChoice(e.target.value); }} disabled={!source}>
-            <option value="auto">Auto · Prefer Romanian</option>
+          </select></label>
+        <label className="field"><span><Captions aria-hidden/> Subtitles</span>
+          <select value={subtitleChoice} onChange={e => chooseSubtitle(e.target.value)} disabled={!source}>
+            <option value="auto">Auto · prefer Romanian</option>
             <option value="off">Off</option>
             {subtitleTracks.map(s => <option key={s.Index} value={String(s.Index)}>
               {languageLabel(s.Language)} · {s.DisplayTitle || s.Codec || 'Subtitles'}
             </option>)}
-          </select>
-        </label>
-        <label className="player-field"><span><SlidersHorizontal size={14}/> QUALITY</span>
+          </select></label>
+        <label className="field"><span><SlidersHorizontal aria-hidden/> Quality</span>
           <select value={quality} onChange={e => { savePosition(); setQuality(Number(e.target.value)); }}>
             <option value={4_000_000}>4 Mbps · Data saver</option>
             <option value={8_000_000}>8 Mbps · HD</option>
             <option value={12_000_000}>12 Mbps · Full HD</option>
             <option value={20_000_000}>20 Mbps · High</option>
-          </select>
-        </label>
-
-        <div className="player-sync-control">
-          <div className="player-sync-top"><span><Captions size={14}/> SUBTITLE TIMING OFFSET</span><strong>{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(2)}s</strong></div>
-          <label><input type="checkbox" checked={autoSync}
-            onChange={e => { setAutoSync(e.target.checked); setSyncState(null); }}/> Auto-sync to dialogue</label>
+          </select></label>
+        <div className="sync">
+          <div className="sync-head"><span>Subtitle timing</span><strong>{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(2)} s</strong></div>
+          <label className="check"><input type="checkbox" checked={autoSync}
+            onChange={e => { setAutoSync(e.target.checked); setSyncState(null); }}/><span className="box" aria-hidden>✓</span>Auto-sync to dialogue</label>
           {syncState && syncState.url === syncUrl && <small role="status">
-            {alignedSubtitle ? 'Timing adjusted to the selected audio.' : 'Analyzing dialogue timing…'}
-          </small>}
-          <div className="player-sync-inputs">
-            <button onClick={() => delayBy(-0.5)} title="Show captions 0.5 seconds earlier">− 0.5s</button>
-            <input type="range" min={-10} max={10} step={0.25} value={subtitleDelay}
-              aria-label="Subtitle timing offset in seconds" onChange={e => setSubtitleDelay(Number(e.target.value))}/>
-            <button onClick={() => delayBy(0.5)} title="Show captions 0.5 seconds later">+ 0.5s</button>
-            <button onClick={() => setSubtitleDelay(0)} title="Reset subtitle timing">Reset</button>
+            {alignedSubtitle ? 'Timing adjusted to the selected audio.' : 'Analyzing dialogue timing…'}</small>}
+          <div className="sync-buttons">
+            <button className="btn small" onClick={() => delayBy(-0.5)} title="Show captions 0.5 s earlier">− 0.5 s</button>
+            <input type="range" min={-10} max={10} step={0.25} value={subtitleDelay} aria-label="Subtitle timing offset in seconds"
+              style={{ '--played': `${((subtitleDelay + 10) / 20) * 100}%` } as React.CSSProperties}
+              onChange={e => setSubtitleDelay(Number(e.target.value))}/>
+            <button className="btn small" onClick={() => delayBy(0.5)} title="Show captions 0.5 s later">+ 0.5 s</button>
+            <button className="btn small" onClick={() => setSubtitleDelay(0)}>Reset</button>
           </div>
-          <small>Negative shows captions earlier; positive shows them later. Only the playback display changes, not the subtitle file.</small>
+          <small>Negative shows captions earlier, positive later. Only the display changes, not the subtitle file.</small>
         </div>
-      </div>}
+      </section>}
     </div>
-    <dialog ref={exitDialogRef} className="player-exit-dialog" aria-labelledby="player-exit-title">
+    <dialog ref={exitDialogRef} className="dialog" aria-labelledby="player-exit-title">
       <h2 id="player-exit-title">Leave playback?</h2>
-      <div className="player-exit-actions">
-        <button className="btn btn-ghost" autoFocus onClick={() => exitDialogRef.current?.close()}>Keep watching</button>
-        <button className="btn btn-primary" onClick={onClose}>Return to library</button>
+      <div className="actions">
+        <button className="btn" autoFocus onClick={() => exitDialogRef.current?.close()}>Keep watching</button>
+        <button className="btn primary" onClick={onClose}>Back to library</button>
       </div>
     </dialog>
   </div>;

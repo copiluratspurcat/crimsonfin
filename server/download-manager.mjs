@@ -1,5 +1,7 @@
 import { accessSync, constants, realpathSync, statSync, statfsSync, mkdirSync, existsSync } from 'node:fs';
-import path from 'node:path';
+// Library and download paths are Linux paths reported by Jellyfin/qBittorrent on the server;
+// handle them as POSIX paths regardless of the platform running the code (or its tests).
+import { posix as path } from 'node:path';
 import { classifyTorrent, safeSeriesDestination } from './media-layout.mjs';
 
 const GiB = 1024 ** 3;

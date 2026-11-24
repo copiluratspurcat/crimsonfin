@@ -5,6 +5,8 @@ import { once } from 'node:events';
 import { createAppServer, rewriteM3u8 } from '../server/index.mjs';
 
 const VIDEO = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+const userData = [];
+const itemQueries = [];
 function upstream(isRevoked = () => false) {
   return http.createServer(async (req, res) => {
     const p = new URL(req.url, 'http://localhost');
@@ -30,7 +32,19 @@ function upstream(isRevoked = () => false) {
     }
     if (p.pathname === '/System/Info/Public') { res.setHeader('content-type', 'application/json'); res.end('{"ServerName":"Fake"}'); return; }
     if (p.pathname.startsWith('/Sessions/Playing') || p.pathname.includes('FavoriteItems')) { res.writeHead(204); res.end(); return; }
+    // Simulate Jellyfin 10.9+: the classic PlayedItems route is gone, the new one works.
+    if (p.pathname.startsWith('/Users/') && p.pathname.includes('/PlayedItems/')) { res.writeHead(404); res.end(); return; }
+    if (p.pathname.startsWith('/UserPlayedItems/')) { userData.push(`${req.method} played ${p.searchParams.get('userId')}`); res.writeHead(204); res.end(); return; }
+    if (p.pathname.endsWith('/UserData') && req.method === 'POST') {
+      let body = ''; for await (const chunk of req) body += chunk;
+      userData.push(`progress ${body}`); res.writeHead(204); res.end(); return;
+    }
     res.setHeader('content-type', 'application/json');
+    if (p.pathname.endsWith('/Items')) itemQueries.push(p.searchParams);
+    if (p.pathname === `/MediaSegments/${VIDEO}`) { res.end(JSON.stringify({ Items: [
+      { Type: 'Intro', StartTicks: 12e7, EndTicks: 92e7 }, { Type: 'Outro', StartTicks: 2500e7, EndTicks: 2600e7 }] })); return; }
+    if (p.pathname.startsWith('/MediaSegments/') || p.pathname.includes('/IntroSkipperSegments')) { res.writeHead(404); res.end(); return; }
+    if (p.pathname === '/Genres') { res.end(JSON.stringify({ Items: [{ Name: 'Drama' }, { Name: 'Comedie' }] })); return; }
     if (p.pathname.endsWith('/Items') || p.pathname.includes('/Items/')) { res.end(JSON.stringify({ Items: [{ Id: VIDEO, Name: 'Test Movie', Type: 'Movie' }], TotalRecordCount: 1 })); return; }
     res.end('{"Items":[],"TotalRecordCount":0}');
   });
@@ -60,11 +74,26 @@ test('login uses per-user token, encrypted storage, cookies, and authorization b
   const library = await request('/api/library?type=movie', cookie);
   assert.equal(library.status, 200);
   assert.equal((await library.json()).Items[0].Name, 'Test Movie');
+  // Paging, sorting and filtering are passed to Jellyfin (page size clamped to 200).
+  assert.equal((await request('/api/library?type=series&start=120&limit=999&sort=name&genre=Drama&filter=favorite', cookie)).status, 200);
+  const sent = itemQueries.at(-1);
+  assert.deepEqual(Object.fromEntries(['IncludeItemTypes', 'StartIndex', 'Limit', 'SortBy', 'SortOrder', 'Genres', 'Filters'].map(k => [k, sent.get(k)])),
+    { IncludeItemTypes: 'Series', StartIndex: '120', Limit: '200', SortBy: 'SortName', SortOrder: 'Ascending', Genres: 'Drama', Filters: 'IsFavorite' });
+  assert.deepEqual(await (await request('/api/genres?type=movie', cookie)).json(), { genres: ['Drama', 'Comedie'] });
+  // Intro/credits markers from MediaSegments (seconds); missing segments are simply null.
+  assert.deepEqual(await (await request(`/api/items/${VIDEO}/segments`, cookie)).json(),
+    { intro: { start: 12, end: 92 }, credits: { start: 2500, end: 2600 } });
+  assert.deepEqual(await (await request('/api/items/bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb/segments', cookie)).json(), { intro: null, credits: null });
   const record = gateway.db.prepare('SELECT token_enc FROM sessions LIMIT 1').get();
   assert.doesNotMatch(record.token_enc, /jellyfin-private-token-123/);
   assert.equal((await request('/api/admin/status', cookie)).status, 403);
   assert.equal((await request('/api/playback', cookie, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event: 'Playing', itemId: VIDEO, positionTicks: 0 }) })).status, 200);
   assert.equal((await request(`/api/items/${VIDEO}/favorite`, cookie, { method: 'POST' })).status, 200);
+  // Watch history: mark watched/unwatched (falls back to the 10.9+ route) and clear the resume position.
+  assert.equal((await request(`/api/items/${VIDEO}/played`, cookie, { method: 'POST' })).status, 200);
+  assert.equal((await request(`/api/items/${VIDEO}/played`, cookie, { method: 'DELETE' })).status, 200);
+  assert.equal((await request(`/api/items/${VIDEO}/progress`, cookie, { method: 'DELETE' })).status, 200);
+  assert.deepEqual(userData, [`POST played ${VIDEO}`, `DELETE played ${VIDEO}`, 'progress {"PlaybackPositionTicks":0}']);
 });
 
 test('proxy supports video range requests without leaking Jellyfin token', async t => {
@@ -72,6 +101,12 @@ test('proxy supports video range requests without leaking Jellyfin token', async
   const cookie = await login();
   const partial = await request(`/jellyfin/Videos/${VIDEO}/stream`, cookie, { headers: { range: 'bytes=0-3' } });
   assert.equal(partial.status, 206);
+  assert.equal(partial.headers.get('cache-control'), 'private, no-store');
+  // Artwork may be cached by the browser: a week when the version tag is pinned, an hour otherwise.
+  const tagged = await request(`/jellyfin/Items/${VIDEO}/Images/Primary?maxWidth=400&tag=abc123`, cookie);
+  assert.equal(tagged.headers.get('cache-control'), 'private, max-age=604800, immutable');
+  const untagged = await request(`/jellyfin/Items/${VIDEO}/Images/Backdrop?maxWidth=1600`, cookie);
+  assert.equal(untagged.headers.get('cache-control'), 'private, max-age=3600');
   assert.equal(partial.headers.get('content-range'), 'bytes 0-3/12');
   assert.equal(await partial.text(), 'abcd');
   const playlist = await request(`/jellyfin/Videos/${VIDEO}/master.m3u8`, cookie);

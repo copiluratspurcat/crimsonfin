@@ -193,6 +193,15 @@ export function createAppServer(options = {}) {
       return raw ? JSON.parse(raw) : { ok: true };
     } finally { clearTimeout(timeout); }
   }
+  /** Try each Jellyfin path in turn, moving on only when the upstream call failed (not on auth errors). */
+  async function jellyfinEither(paths, session, init) {
+    let lastError;
+    for (const relative of paths) {
+      try { return await jellyfin(relative, session, init); }
+      catch (error) { if (error?.status !== 502) throw error; lastError = error; }
+    }
+    throw lastError;
+  }
   async function requireSession(req) {
     const raw = decodeURIComponent(parseCookie(req.headers.cookie, 'cf_session'));
     if (!raw || raw.length > 128) failure('Please sign in', 401);
@@ -232,7 +241,12 @@ export function createAppServer(options = {}) {
       if (value) passHeaders[name] = value;
     }
     passHeaders['x-content-type-options'] = 'nosniff';
-    passHeaders['cache-control'] = 'private, no-store';
+    // Artwork may be cached by the viewer's browser (never shared caches). A `tag` query
+    // pins the exact image version, so a new tag means new artwork: safe to keep for a week.
+    // Streams, playlists and subtitles stay uncached.
+    const isImage = /^\/Items\/[\w-]+\/Images\//.test(pathname) && upstream.ok;
+    passHeaders['cache-control'] = !isImage ? 'private, no-store'
+      : uri.searchParams.has('tag') ? 'private, max-age=604800, immutable' : 'private, max-age=3600';
     if (/\.m3u8(?:\?|$)/i.test(uri.pathname) && upstream.ok && req.method === 'GET') {
       const raw = await upstream.text();
       if (raw.length > 2 * 1024 * 1024) failure('Playlist too large', 502);
@@ -318,11 +332,29 @@ export function createAppServer(options = {}) {
           return json(res, 200, { user: { id: user.userId, name: user.userName, isAdmin: user.isAdmin } });
         }
         if (pathname === '/api/library' && req.method === 'GET') {
+          // Paged, sorted and filtered by Jellyfin so libraries of any size stay complete.
+          const q = url.searchParams;
+          const type = q.get('type') === 'series' ? 'Series' : q.get('type') === 'all' ? 'Movie,Series' : 'Movie';
+          const sorts = { added: ['DateCreated', 'Descending'], name: ['SortName', 'Ascending'],
+            year: ['ProductionYear,SortName', 'Descending'], rating: ['CommunityRating,SortName', 'Descending'],
+            played: ['DatePlayed', 'Descending'] };
+          const [sortBy, sortOrder] = sorts[q.get('sort')] || sorts.added;
+          const filters = { favorite: 'IsFavorite', played: 'IsPlayed' };
+          const start = Math.max(0, Math.min(100000, Number.parseInt(q.get('start') || '0', 10) || 0));
+          const limit = Math.max(1, Math.min(200, Number.parseInt(q.get('limit') || '60', 10) || 60));
+          const genre = String(q.get('genre') || '').trim().slice(0, 80);
+          const params = new URLSearchParams({
+            Recursive: 'true', IncludeItemTypes: type, Fields: 'Overview,Genres,PrimaryImageAspectRatio,ChildCount',
+            SortBy: sortBy, SortOrder: sortOrder, StartIndex: String(start), Limit: String(limit), EnableTotalRecordCount: 'true'
+          });
+          if (genre) params.set('Genres', genre);
+          if (filters[q.get('filter')]) params.set('Filters', filters[q.get('filter')]);
+          return json(res, 200, await jellyfin(`/Users/${user.userId}/Items?${params}`, user));
+        }
+        if (pathname === '/api/genres' && req.method === 'GET') {
           const type = url.searchParams.get('type') === 'series' ? 'Series' : 'Movie';
-          return json(res, 200, await jellyfin(`/Users/${user.userId}/Items?${new URLSearchParams({
-            Recursive: 'true', IncludeItemTypes: type, Fields: 'Overview,Genres,PrimaryImageAspectRatio',
-            SortBy: 'DateCreated', SortOrder: 'Descending', Limit: '150'
-          })}`, user));
+          const data = await jellyfin(`/Genres?${new URLSearchParams({ UserId: user.userId, IncludeItemTypes: type, Recursive: 'true', SortBy: 'SortName' })}`, user);
+          return json(res, 200, { genres: (data?.Items || []).map(g => String(g?.Name || '')).filter(Boolean).slice(0, 200) });
         }
         if (pathname === '/api/continue' && req.method === 'GET') return json(res, 200,
           await jellyfin(`/Users/${user.userId}/Items/Resume?Limit=24&Fields=Overview,Genres`, user));
@@ -358,13 +390,56 @@ export function createAppServer(options = {}) {
         if (episodes && req.method === 'GET') {
           const season = url.searchParams.get('seasonId');
           return json(res, 200, await jellyfin(`/Shows/${safeId(episodes[1])}/Episodes?${new URLSearchParams({
-            UserId: user.userId, ...(season ? { SeasonId: safeId(season) } : {})
+            UserId: user.userId, Fields: 'Overview', ...(season ? { SeasonId: safeId(season) } : {})
           })}`, user));
         }
         const favorite = pathname.match(/^\/api\/items\/([\w-]+)\/favorite$/);
         if (favorite && ['POST', 'DELETE'].includes(req.method)) {
           verifyMutation(req);
           await jellyfin(`/Users/${user.userId}/FavoriteItems/${safeId(favorite[1])}`, user, { method: req.method });
+          return json(res, 200, { ok: true });
+        }
+        // Intro / credits markers for "Skip intro" and the next-episode prompt. Jellyfin 10.10+
+        // exposes MediaSegments; older servers may have the Intro Skipper plugin. Neither is required.
+        const segments = pathname.match(/^\/api\/items\/([\w-]+)\/segments$/);
+        if (segments && req.method === 'GET') {
+          const id = safeId(segments[1]);
+          const span = (start, end) => Number.isFinite(start) && Number.isFinite(end) && end > start ? { start, end } : null;
+          const optional = async relative => {
+            try { return await jellyfin(relative, user); }
+            catch (error) { if (error?.status === 401) throw error; return null; }
+          };
+          const found = { intro: null, credits: null };
+          const media = await optional(`/MediaSegments/${id}?includeSegmentTypes=Intro&includeSegmentTypes=Outro`);
+          for (const s of Array.isArray(media?.Items) ? media.Items : []) {
+            const value = span(Number(s?.StartTicks) / 1e7, Number(s?.EndTicks) / 1e7);
+            if (s?.Type === 'Intro' && !found.intro) found.intro = value;
+            if (s?.Type === 'Outro' && !found.credits) found.credits = value;
+          }
+          if (!found.intro && !found.credits) {
+            const plugin = await optional(`/Episode/${id}/IntroSkipperSegments`);
+            found.intro = span(Number(plugin?.Introduction?.IntroStart), Number(plugin?.Introduction?.IntroEnd));
+            found.credits = span(Number(plugin?.Credits?.IntroStart), Number(plugin?.Credits?.IntroEnd));
+          }
+          return json(res, 200, found);
+        }
+        // Watch history. Jellyfin 10.9 moved these user-data endpoints; try the
+        // classic route first and fall back to the newer one if it fails.
+        const played = pathname.match(/^\/api\/items\/([\w-]+)\/played$/);
+        if (played && ['POST', 'DELETE'].includes(req.method)) {
+          verifyMutation(req);
+          const id = safeId(played[1]);
+          await jellyfinEither([`/Users/${user.userId}/PlayedItems/${id}`, `/UserPlayedItems/${id}?userId=${encodeURIComponent(user.userId)}`],
+            user, { method: req.method });
+          return json(res, 200, { ok: true });
+        }
+        const progress = pathname.match(/^\/api\/items\/([\w-]+)\/progress$/);
+        if (progress && req.method === 'DELETE') {
+          verifyMutation(req);
+          const id = safeId(progress[1]);
+          // A zero resume position removes the item from Continue watching without marking it watched.
+          await jellyfinEither([`/Users/${user.userId}/Items/${id}/UserData`, `/UserItems/${id}/UserData?userId=${encodeURIComponent(user.userId)}`],
+            user, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ PlaybackPositionTicks: 0 }) });
           return json(res, 200, { ok: true });
         }
         if (pathname === '/api/playback' && req.method === 'POST') {

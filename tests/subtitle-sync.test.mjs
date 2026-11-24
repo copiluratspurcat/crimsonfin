@@ -8,7 +8,9 @@ import { createSubtitleSync } from '../server/subtitle-sync.mjs';
 import { spawnSync } from 'node:child_process';
 
 test('automatic subtitle sync queues one job and serves corrected WebVTT', {
-  skip: spawnSync('ffmpeg', ['-version']).status !== 0
+  // The fake aligner below is a #!/bin/sh script, which Windows cannot execute.
+  skip: process.platform === 'win32' ? 'needs a POSIX shell for the fake aligner'
+    : spawnSync('ffmpeg', ['-version']).status !== 0
 }, async () => {
   const folder = await mkdtemp(path.join(os.tmpdir(), 'crimsonfin-subtitle-test-'));
   try {
