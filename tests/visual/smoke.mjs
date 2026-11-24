@@ -55,7 +55,7 @@ async function run(mode, executablePath) {
   const tab = async name => { const ok = await clickText('.topnav button', name); await wait(800); return ok; };
 
   try {
-    // Subtitles preference "Off" exercises the CC toggle fallback below.
+    // Start with a manual subtitle preference to verify the language switch replaces it.
     await page.goto(base, { waitUntil: 'networkidle0' });
     await evaluate(() => localStorage.setItem('crimsonfin.prefs', JSON.stringify({ subtitleLanguage: 'off', titleLanguage: 'en' })));
     await page.reload({ waitUntil: 'networkidle0' }); await wait(600);
@@ -69,13 +69,15 @@ async function run(mode, executablePath) {
       document.querySelector('.spotlight h1')?.textContent === 'Portul noaptea' &&
       [...document.querySelectorAll('.card-text strong')].some(node => node.textContent === 'Portul noaptea')));
     await page.reload({ waitUntil: 'networkidle0' });
-    check('title language survives reload', await evaluate(selector =>
+    check('Romanian title and subtitle preferences survive reload', await evaluate(selector =>
       document.querySelector(selector)?.getAttribute('aria-checked') === 'true' &&
+      JSON.parse(localStorage.getItem('crimsonfin.prefs')).subtitleLanguage === 'ro' &&
       document.querySelector('.spotlight h1')?.textContent === 'Portul noaptea', languageSwitch));
     await page.focus(languageSwitch);
     await page.keyboard.press('Enter');
-    check('English restores the English title', await evaluate(() =>
-      document.querySelector('.spotlight h1')?.textContent === 'The Harbour at Night'));
+    check('English updates the title and subtitle preference', await evaluate(() =>
+      document.querySelector('.spotlight h1')?.textContent === 'The Harbour at Night' &&
+      JSON.parse(localStorage.getItem('crimsonfin.prefs')).subtitleLanguage === 'en'));
 
     // Home
     const rows = await evaluate(() => [...document.querySelectorAll('.row h2')].map(h => h.textContent.trim()));
@@ -164,14 +166,29 @@ async function run(mode, executablePath) {
     check('Skip intro appears in the intro', await evaluate(() => !!document.querySelector('.skip-intro')));
     await shot('12-player');
     const cc = () => evaluate(() => document.querySelector('.player [aria-pressed][aria-label*="ubtitle"]')?.getAttribute('aria-pressed'));
+    check('player automatically selects English after the menu switch', await evaluate(() =>
+      !!document.querySelector('.player [aria-label="Subtitles: English (C)"][aria-pressed="true"]')));
+    const optionsButton = '[aria-label="Audio, subtitles and quality"]';
+    await page.click(optionsButton);
+    const subtitles = '.player-panel .field select';
+    const selectSubtitle = value => evaluate((selector, value) => {
+      const select = document.querySelectorAll(selector)[1];
+      select.value = value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }, subtitles, value);
+    await selectSubtitle('off');
+    await selectSubtitle('auto');
+    await page.click('[aria-label="Close options"]');
     const ccStates = [await cc()];
     for (let i = 0; i < 2; i++) { await page.keyboard.press('c'); await wait(300); ccStates.push(await cc()); }
     check('C toggles subtitles even with the preference Off', ccStates.join() === 'false,true,false', ccStates.join());
+    if (!tv) await page.focus(optionsButton);
     await evaluate(() => document.querySelector('video').dispatchEvent(new Event('ended'))); await wait(1200);
     check('Up next appears after an episode', await evaluate(() => !!document.querySelector('.up-next')));
-    const focused = await evaluate(() => document.activeElement?.textContent?.trim() || '');
+    const focusStayed = await evaluate(selector => document.activeElement?.matches(selector),
+      tv ? '.up-next button.primary' : optionsButton);
     // TV: the remote should land on "Play now". PC: focus must not move (Space would start it).
-    check(tv ? 'Up next focuses Play now on TV' : 'Up next leaves keyboard focus alone', tv ? focused.includes('Play now') : !focused.includes('Play now'), focused);
+    check(tv ? 'Up next focuses Play now on TV' : 'Up next leaves keyboard focus alone', focusStayed);
     await shot('13-up-next');
 
     check('no JavaScript errors', pageErrors.length === 0, pageErrors.join(' | '));

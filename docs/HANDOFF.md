@@ -2,6 +2,12 @@
 
 _Last updated: 2026-11-24. Update this file at the end of every work session (see `AGENTS.md`)._
 
+## Shared title and subtitle preference
+
+Selecting EN or RO in the main menu also sets the player's automatic subtitle
+language. The active preference appears in the Auto option. Users can still
+pick a specific subtitle track or turn subtitles off in the player.
+
 ## Release 2.5.9
 
 Includes the English and Romanian title switch, local-only Romanian subtitle
