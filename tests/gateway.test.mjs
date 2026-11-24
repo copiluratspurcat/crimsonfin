@@ -6,6 +6,7 @@ import { createAppServer, rewriteM3u8 } from '../server/index.mjs';
 
 const VIDEO = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
 const userData = [];
+const itemQueries = [];
 function upstream(isRevoked = () => false) {
   return http.createServer(async (req, res) => {
     const p = new URL(req.url, 'http://localhost');
@@ -39,6 +40,8 @@ function upstream(isRevoked = () => false) {
       userData.push(`progress ${body}`); res.writeHead(204); res.end(); return;
     }
     res.setHeader('content-type', 'application/json');
+    if (p.pathname.endsWith('/Items')) itemQueries.push(p.searchParams);
+    if (p.pathname === '/Genres') { res.end(JSON.stringify({ Items: [{ Name: 'Drama' }, { Name: 'Comedie' }] })); return; }
     if (p.pathname.endsWith('/Items') || p.pathname.includes('/Items/')) { res.end(JSON.stringify({ Items: [{ Id: VIDEO, Name: 'Test Movie', Type: 'Movie' }], TotalRecordCount: 1 })); return; }
     res.end('{"Items":[],"TotalRecordCount":0}');
   });
@@ -68,6 +71,12 @@ test('login uses per-user token, encrypted storage, cookies, and authorization b
   const library = await request('/api/library?type=movie', cookie);
   assert.equal(library.status, 200);
   assert.equal((await library.json()).Items[0].Name, 'Test Movie');
+  // Paging, sorting and filtering are passed to Jellyfin (page size clamped to 200).
+  assert.equal((await request('/api/library?type=series&start=120&limit=999&sort=name&genre=Drama&filter=favorite', cookie)).status, 200);
+  const sent = itemQueries.at(-1);
+  assert.deepEqual(Object.fromEntries(['IncludeItemTypes', 'StartIndex', 'Limit', 'SortBy', 'SortOrder', 'Genres', 'Filters'].map(k => [k, sent.get(k)])),
+    { IncludeItemTypes: 'Series', StartIndex: '120', Limit: '200', SortBy: 'SortName', SortOrder: 'Ascending', Genres: 'Drama', Filters: 'IsFavorite' });
+  assert.deepEqual(await (await request('/api/genres?type=movie', cookie)).json(), { genres: ['Drama', 'Comedie'] });
   const record = gateway.db.prepare('SELECT token_enc FROM sessions LIMIT 1').get();
   assert.doesNotMatch(record.token_enc, /jellyfin-private-token-123/);
   assert.equal((await request('/api/admin/status', cookie)).status, 403);

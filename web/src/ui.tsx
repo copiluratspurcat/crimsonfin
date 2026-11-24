@@ -86,7 +86,7 @@ export function CardMenu({ item, onOpen, className = 'card-menu' }: { item: Item
     },
     onSuccess: () => {
       setOpen(false);
-      for (const key of ['resume', 'nextup', 'movies', 'series', 'item', 'episodes', 'search']) void queryClient.invalidateQueries({ queryKey: [key] });
+      for (const key of ['resume', 'nextup', 'movies', 'series', 'library', 'item', 'episodes', 'search']) void queryClient.invalidateQueries({ queryKey: [key] });
     }
   });
   useLayoutEffect(() => {

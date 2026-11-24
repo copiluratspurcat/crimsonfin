@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Check, ChevronDown, Delete, Heart, Info, Play, Plus, Search, Star } from 'lucide-react';
 import { api, itemArt, episodeCode, isPlayable, minutesLeft, progressOf, runtime, useArtworkAccent, useDebounced, type Item, type PageResult } from './lib';
 import { Artwork, CardMenu, Empty, PageHead, PosterCard, Row, Tabs, WideCard } from './ui';
@@ -48,25 +48,50 @@ export function HomePage({ hero, recent, upNext, movies, series, loading, error,
 /* ------------------------------ Movies / Shows ----------------------------- */
 const sorts = { added: 'Recently added', name: 'A–Z', year: 'Newest', rating: 'Top rated' } as const;
 type Sort = keyof typeof sorts;
-function sortItems(items: Item[], sort: Sort) {
-  const list = [...items];
-  if (sort === 'name') list.sort((a, b) => a.Name.localeCompare(b.Name));
-  if (sort === 'year') list.sort((a, b) => (b.ProductionYear || 0) - (a.ProductionYear || 0));
-  if (sort === 'rating') list.sort((a, b) => (b.CommunityRating || 0) - (a.CommunityRating || 0));
-  return list; // 'added': the server already returns newest first
+const PAGE = 60;
+
+/** A Jellyfin listing fetched page by page (sorting/filtering happen on the server). */
+export function useLibrary({ type, sort = 'added', genre = '', filter = '' }: { type: 'movie' | 'series' | 'all'; sort?: string; genre?: string; filter?: '' | 'favorite' | 'played' }) {
+  const query = useInfiniteQuery({
+    queryKey: ['library', type, sort, genre, filter],
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => api<PageResult>(`/api/library?${new URLSearchParams({
+      type, sort, start: String(pageParam), limit: String(PAGE), ...(genre ? { genre } : {}), ...(filter ? { filter } : {}) })}`),
+    getNextPageParam: (last, pages) => {
+      const loaded = pages.reduce((n, p) => n + p.Items.length, 0);
+      return last.Items.length === PAGE && loaded < (last.TotalRecordCount ?? Infinity) ? loaded : undefined;
+    }
+  });
+  const items = useMemo(() => query.data?.pages.flatMap(p => p.Items) ?? [], [query.data]);
+  return { ...query, items, total: query.data?.pages[0]?.TotalRecordCount ?? items.length };
 }
 
-export function LibraryPage({ kind, items, nextUp, loading, error, onRetry, onOpen, onPlay }: Nav & {
-  kind: 'movies' | 'series'; items: Item[]; nextUp: Item[]; loading: boolean; error?: string; onRetry: () => void;
-}) {
+/** Loads the next page when it scrolls into view (also when TV focus scrolls the page). */
+function LoadMore({ more, loading, onMore }: { more: boolean; loading: boolean; onMore: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !more) return;
+    const io = new IntersectionObserver(entries => { if (entries.some(e => e.isIntersecting)) onMore(); }, { rootMargin: '900px 0px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [more, onMore]);
+  if (!more && !loading) return null;
+  return <div ref={ref} className="load-more" role="status">{loading ? 'Loading more…' : ''}</div>;
+}
+
+export function LibraryPage({ kind, nextUp, onOpen, onPlay }: Nav & { kind: 'movies' | 'series'; nextUp: Item[] }) {
+  const type = kind === 'movies' ? 'movie' : 'series';
   const [genre, setGenre] = useState('');
   const [sort, setSort] = useState<Sort>('added');
-  const genres = useMemo(() => [...new Set(items.flatMap(i => i.Genres || []))].sort().slice(0, 30), [items]);
-  const shown = sortItems(genre ? items.filter(i => i.Genres?.includes(genre)) : items, sort);
-  const noun = kind === 'movies' ? 'titles' : 'series';
+  const lib = useLibrary({ type, sort, genre });
+  const genres = useQuery({ queryKey: ['genres', type], staleTime: 10 * 60_000,
+    queryFn: () => api<{ genres: string[] }>(`/api/genres?type=${type}`) }).data?.genres ?? [];
+  const noun = kind === 'movies' ? 'title' : 'series';
+  const count = lib.isPending ? 'Loading…' : `${lib.total} ${lib.total === 1 || noun === 'series' ? noun : noun + 's'}`;
   const sortKeys = Object.keys(sorts) as Sort[];
   return <div className="page library">
-    <PageHead title={kind === 'movies' ? 'Movies' : 'Shows'} meta={loading ? 'Loading…' : `${shown.length} ${shown.length === 1 ? noun.replace(/s$/, '') : noun}`}>
+    <PageHead title={kind === 'movies' ? 'Movies' : 'Shows'} meta={count}>
       {isTv ? <button className="pill select" onClick={() => setSort(sortKeys[(sortKeys.indexOf(sort) + 1) % sortKeys.length])}>
         Sort: {sorts[sort]} <ChevronDown aria-hidden /></button>
         : <>
@@ -77,33 +102,42 @@ export function LibraryPage({ kind, items, nextUp, loading, error, onRetry, onOp
         </>}
     </PageHead>
     {isTv && genres.length > 0 && <div className="pills" role="group" aria-label="Filter by genre">
-      {['', ...genres.slice(0, 10)].map(g => <button key={g || 'all'} className={genre === g ? 'pill active' : 'pill'} onClick={() => setGenre(g)}>{g || 'All'}</button>)}
+      {['', ...genres.slice(0, 12)].map(g => <button key={g || 'all'} className={genre === g ? 'pill active' : 'pill'} onClick={() => setGenre(g)}>{g || 'All'}</button>)}
     </div>}
-    {error && <Empty action={<button className="btn" onClick={onRetry}>Retry</button>}>{error}</Empty>}
+    {lib.error && <Empty action={<button className="btn" onClick={() => void lib.refetch()}>Retry</button>}>{lib.error.message}</Empty>}
     {kind === 'series' && nextUp.length > 0 && !genre && <Row title="Next up">{nextUp.map(i => <WideCard key={i.Id} item={i} onOpen={onOpen} onPlay={onPlay} />)}</Row>}
     {kind === 'series' && nextUp.length > 0 && !genre && <h2 className="section-title">All shows</h2>}
-    {loading ? <Empty>Loading your library…</Empty> : shown.length ? <div className="poster-grid">
-      {shown.map(i => <PosterCard key={i.Id} item={i} onOpen={onOpen} onPlay={onPlay}
-        subtitle={kind === 'series' ? [i.ProductionYear, i.ChildCount ? `${i.ChildCount} season${i.ChildCount === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ') : undefined} />)}
-    </div> : !error && <Empty>There are no {noun} to show here yet.</Empty>}
+    {lib.isPending ? <Empty>Loading your library…</Empty> : lib.items.length ? <>
+      <div className="poster-grid">
+        {lib.items.map(i => <PosterCard key={i.Id} item={i} onOpen={onOpen} onPlay={onPlay}
+          subtitle={kind === 'series' ? [i.ProductionYear, i.ChildCount ? `${i.ChildCount} season${i.ChildCount === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ') : undefined} />)}
+      </div>
+      <LoadMore more={!!lib.hasNextPage} loading={lib.isFetchingNextPage} onMore={() => { if (!lib.isFetchingNextPage) void lib.fetchNextPage(); }} />
+    </> : !lib.error && <Empty>There are no {kind === 'movies' ? 'movies' : 'shows'} {genre ? `in ${genre} ` : ''}to show here yet.</Empty>}
   </div>;
 }
 
 /* --------------------------------- My list -------------------------------- */
-export function MyListPage({ favorites, watching, watched, loading, onOpen, onPlay }: Nav & {
-  favorites: Item[]; watching: Item[]; watched: Item[]; loading: boolean;
-}) {
+export function MyListPage({ watching, loadingWatching, onOpen, onPlay }: Nav & { watching: Item[]; loadingWatching: boolean }) {
   const [tab, setTab] = useState<'favorites' | 'watching' | 'watched'>('favorites');
-  const items = tab === 'favorites' ? favorites : tab === 'watching' ? watching : watched;
+  const favorites = useLibrary({ type: 'all', sort: 'name', filter: 'favorite' });
+  const watched = useLibrary({ type: 'all', sort: 'played', filter: 'played' });
+  const active = tab === 'favorites' ? favorites : tab === 'watched' ? watched : null;
+  const items = active ? active.items : watching;
+  const loading = active ? active.isPending : loadingWatching;
   return <div className="page mylist">
     <PageHead title="My list"><Tabs label="My list" value={tab} onChange={setTab} options={[
-      { value: 'favorites', label: 'Favorites', count: favorites.length },
+      { value: 'favorites', label: 'Favorites', count: favorites.isPending ? undefined : favorites.total },
       { value: 'watching', label: 'Continue watching', count: watching.length },
-      { value: 'watched', label: 'Watched', count: watched.length }]} /></PageHead>
-    {loading ? <Empty>Loading…</Empty> : items.length ? <div className="wide-grid">
-      {items.map(i => <WideCard key={i.Id} item={i} onOpen={onOpen} onPlay={onPlay}
-        subtitle={tab === 'watching' ? undefined : [i.Type === 'Series' ? 'Show' : 'Movie', i.ProductionYear, runtime(i.RunTimeTicks)].filter(Boolean).join(' · ')} />)}
-    </div> : <Empty>{tab === 'favorites' ? 'Nothing saved yet. Open any title and choose “My list”.'
+      { value: 'watched', label: 'Watched', count: watched.isPending ? undefined : watched.total }]} /></PageHead>
+    {active?.error && <Empty action={<button className="btn" onClick={() => void active.refetch()}>Retry</button>}>{active.error.message}</Empty>}
+    {loading ? <Empty>Loading…</Empty> : items.length ? <>
+      <div className="wide-grid">
+        {items.map(i => <WideCard key={i.Id} item={i} onOpen={onOpen} onPlay={onPlay}
+          subtitle={tab === 'watching' ? undefined : [i.Type === 'Series' ? 'Show' : 'Movie', i.ProductionYear, runtime(i.RunTimeTicks)].filter(Boolean).join(' · ')} />)}
+      </div>
+      {active && <LoadMore more={!!active.hasNextPage} loading={active.isFetchingNextPage} onMore={() => { if (!active.isFetchingNextPage) void active.fetchNextPage(); }} />}
+    </> : !active?.error && <Empty>{tab === 'favorites' ? 'Nothing saved yet. Open any title and choose “My list”.'
       : tab === 'watching' ? 'Nothing in progress.' : 'Nothing watched yet.'}</Empty>}
   </div>;
 }

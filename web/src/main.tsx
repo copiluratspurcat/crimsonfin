@@ -25,8 +25,8 @@ function App() {
   const [playing, setPlaying] = useState<Item | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const signedIn = !!me.data;
-  const movies = useQuery({ queryKey: ['movies'], queryFn: () => api<PageResult>('/api/library?type=movie'), enabled: signedIn });
-  const series = useQuery({ queryKey: ['series'], queryFn: () => api<PageResult>('/api/library?type=series'), enabled: signedIn });
+  const movies = useQuery({ queryKey: ['movies'], queryFn: () => api<PageResult>('/api/library?type=movie&limit=30'), enabled: signedIn });
+  const series = useQuery({ queryKey: ['series'], queryFn: () => api<PageResult>('/api/library?type=series&limit=30'), enabled: signedIn });
   const resume = useQuery({ queryKey: ['resume'], queryFn: () => api<PageResult>('/api/continue'), enabled: signedIn });
   const nextup = useQuery({ queryKey: ['nextup'], queryFn: () => api<PageResult>('/api/nextup'), enabled: signedIn });
   const logout = useMutation({
@@ -97,12 +97,9 @@ function App() {
         onPlay={play} onChanged={() => void qc.invalidateQueries()} />}
       {keep('home', <HomePage hero={hero} recent={recent} upNext={upcoming.slice(recent.length)} movies={movies.data?.Items || []}
         series={series.data?.Items || []} loading={movies.isPending || series.isPending} error={libraryError} onRetry={retryLibrary} {...nav} />)}
-      {keep('movies', <LibraryPage kind="movies" items={movies.data?.Items || []} nextUp={[]} loading={movies.isPending}
-        error={movies.error?.message} onRetry={retryLibrary} {...nav} />)}
-      {keep('series', <LibraryPage kind="series" items={series.data?.Items || []} nextUp={upcoming.filter(i => i.Type === 'Episode')}
-        loading={series.isPending} error={series.error?.message} onRetry={retryLibrary} {...nav} />)}
-      {keep('mylist', <MyListPage favorites={all.filter(i => i.UserData?.IsFavorite)} watching={upcoming}
-        watched={all.filter(i => i.UserData?.Played)} loading={movies.isPending || series.isPending || resume.isPending || nextup.isPending} {...nav} />)}
+      {keep('movies', <LibraryPage kind="movies" nextUp={[]} {...nav} />)}
+      {keep('series', <LibraryPage kind="series" nextUp={upcoming.filter(i => i.Type === 'Episode')} {...nav} />)}
+      {keep('mylist', <MyListPage watching={upcoming} loadingWatching={resume.isPending || nextup.isPending} {...nav} />)}
       {!selected && <>
         {tab === 'search' && <SearchPage initial={searchTerm} {...nav} />}
         {tab === 'requests' && <RequestsPage user={user} onShowDownloads={() => goTab(user.isAdmin ? 'downloads' : 'requests')} />}
@@ -111,7 +108,7 @@ function App() {
     </main>
     {playing && <Player key={playing.Id} item={playing} onClose={() => {
       setPlaying(null);
-      for (const key of ['resume', 'nextup', 'movies', 'series', 'item', 'episodes']) void qc.invalidateQueries({ queryKey: [key] });
+      for (const key of ['resume', 'nextup', 'movies', 'series', 'library', 'item', 'episodes']) void qc.invalidateQueries({ queryKey: [key] });
     }} />}
   </div>;
 }

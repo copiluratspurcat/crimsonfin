@@ -332,11 +332,29 @@ export function createAppServer(options = {}) {
           return json(res, 200, { user: { id: user.userId, name: user.userName, isAdmin: user.isAdmin } });
         }
         if (pathname === '/api/library' && req.method === 'GET') {
+          // Paged, sorted and filtered by Jellyfin so libraries of any size stay complete.
+          const q = url.searchParams;
+          const type = q.get('type') === 'series' ? 'Series' : q.get('type') === 'all' ? 'Movie,Series' : 'Movie';
+          const sorts = { added: ['DateCreated', 'Descending'], name: ['SortName', 'Ascending'],
+            year: ['ProductionYear,SortName', 'Descending'], rating: ['CommunityRating,SortName', 'Descending'],
+            played: ['DatePlayed', 'Descending'] };
+          const [sortBy, sortOrder] = sorts[q.get('sort')] || sorts.added;
+          const filters = { favorite: 'IsFavorite', played: 'IsPlayed' };
+          const start = Math.max(0, Math.min(100000, Number.parseInt(q.get('start') || '0', 10) || 0));
+          const limit = Math.max(1, Math.min(200, Number.parseInt(q.get('limit') || '60', 10) || 60));
+          const genre = String(q.get('genre') || '').trim().slice(0, 80);
+          const params = new URLSearchParams({
+            Recursive: 'true', IncludeItemTypes: type, Fields: 'Overview,Genres,PrimaryImageAspectRatio,ChildCount',
+            SortBy: sortBy, SortOrder: sortOrder, StartIndex: String(start), Limit: String(limit), EnableTotalRecordCount: 'true'
+          });
+          if (genre) params.set('Genres', genre);
+          if (filters[q.get('filter')]) params.set('Filters', filters[q.get('filter')]);
+          return json(res, 200, await jellyfin(`/Users/${user.userId}/Items?${params}`, user));
+        }
+        if (pathname === '/api/genres' && req.method === 'GET') {
           const type = url.searchParams.get('type') === 'series' ? 'Series' : 'Movie';
-          return json(res, 200, await jellyfin(`/Users/${user.userId}/Items?${new URLSearchParams({
-            Recursive: 'true', IncludeItemTypes: type, Fields: 'Overview,Genres,PrimaryImageAspectRatio',
-            SortBy: 'DateCreated', SortOrder: 'Descending', Limit: '150'
-          })}`, user));
+          const data = await jellyfin(`/Genres?${new URLSearchParams({ UserId: user.userId, IncludeItemTypes: type, Recursive: 'true', SortBy: 'SortName' })}`, user);
+          return json(res, 200, { genres: (data?.Items || []).map(g => String(g?.Name || '')).filter(Boolean).slice(0, 200) });
         }
         if (pathname === '/api/continue' && req.method === 'GET') return json(res, 200,
           await jellyfin(`/Users/${user.userId}/Items/Resume?Limit=24&Fields=Overview,Genres`, user));
