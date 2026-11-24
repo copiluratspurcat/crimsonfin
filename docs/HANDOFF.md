@@ -2,6 +2,15 @@
 
 _Last updated: 2026-11-24. Update this file at the end of every work session (see `AGENTS.md`)._
 
+## English and Romanian titles
+
+The top-right EN/RO switch changes displayed movie and show names and remembers the
+choice on the device. Set `TMDB_READ_ACCESS_TOKEN` in the gateway's `.env` to enable both
+localized titles for items with a Jellyfin TMDB ID. When a translation is missing,
+CrimsonFin uses Jellyfin's title (or its original title in English mode).
+Search matching and sort order still follow Jellyfin. The live TMDB configuration
+and a physical TV remain unverified.
+
 ## Release 2.5.8
 
 The live FileList API returned valid rows with English labels such as Movies HD

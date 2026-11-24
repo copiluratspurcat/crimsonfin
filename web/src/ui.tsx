@@ -1,3 +1,4 @@
+import { useMediaTitle } from './titles';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Check, ChevronLeft, ChevronRight, Clapperboard, Eye, EyeOff, Heart, HeartOff, History, MoreHorizontal, Play, Tv2 } from 'lucide-react';
@@ -28,9 +29,10 @@ function ProgressBar({ value }: { value: number }) {
 type CardProps = { item: Item; onOpen: (item: Item) => void; onPlay: (item: Item) => void; subtitle?: string; badge?: string };
 
 export function PosterCard({ item, onOpen, onPlay, subtitle, badge }: CardProps) {
+  const title = useMediaTitle(item);
   const meta = subtitle ?? [item.ProductionYear, item.Genres?.[0]].filter(Boolean).join(' · ');
   return <div className="card poster-card">
-    <button className="card-hit" onClick={() => onOpen(item)} aria-label={`${item.Name}${meta ? ', ' + meta : ''}`}>
+    <button className="card-hit" onClick={() => onOpen(item)} aria-label={`${title}${meta ? ', ' + meta : ''}`}>
       <span className="card-art">
         <Artwork sources={[itemArt(item, 'Primary', 400)]} label="No artwork" />
         {badge && <span className="card-badge">{badge}</span>}
@@ -38,7 +40,7 @@ export function PosterCard({ item, onOpen, onPlay, subtitle, badge }: CardProps)
         {item.UserData?.IsFavorite && !item.UserData?.Played && <span className="card-fav" title="In My list"><Heart aria-hidden /></span>}
         <ProgressBar value={progressOf(item)} />
       </span>
-      <span className="card-text"><strong>{item.Name}</strong>{meta && <small>{meta}</small>}</span>
+      <span className="card-text"><strong>{title}</strong>{meta && <small>{meta}</small>}</span>
     </button>
     <QuickPlay item={item} onOpen={onOpen} onPlay={onPlay} />
     <CardMenu item={item} onOpen={onOpen} />
@@ -46,7 +48,7 @@ export function PosterCard({ item, onOpen, onPlay, subtitle, badge }: CardProps)
 }
 
 export function WideCard({ item, onOpen, onPlay, subtitle, badge }: CardProps) {
-  const title = item.Type === 'Episode' ? item.SeriesName || item.Name : item.Name;
+  const title = useMediaTitle(item);
   const sub = subtitle ?? [episodeCode(item), minutesLeft(item) || (item.Type === 'Episode' ? item.Name : item.ProductionYear)]
     .filter(Boolean).join(' · ');
   return <div className="card wide-card">

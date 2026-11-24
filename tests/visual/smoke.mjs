@@ -57,8 +57,25 @@ async function run(mode, executablePath) {
   try {
     // Subtitles preference "Off" exercises the CC toggle fallback below.
     await page.goto(base, { waitUntil: 'networkidle0' });
-    await evaluate(() => localStorage.setItem('crimsonfin.prefs', JSON.stringify({ subtitleLanguage: 'off' })));
+    await evaluate(() => localStorage.setItem('crimsonfin.prefs', JSON.stringify({ subtitleLanguage: 'off', titleLanguage: 'en' })));
     await page.reload({ waitUntil: 'networkidle0' }); await wait(600);
+
+    // Both title variants are served by the mock under the same item ID.
+    const languageSwitch = '[role="switch"][aria-label="Romanian media titles"]';
+    await page.waitForSelector(languageSwitch);
+    await page.focus(languageSwitch);
+    await page.keyboard.press('Enter');
+    check('title language switch updates hero and cards', await evaluate(() =>
+      document.querySelector('.spotlight h1')?.textContent === 'Portul noaptea' &&
+      [...document.querySelectorAll('.card-text strong')].some(node => node.textContent === 'Portul noaptea')));
+    await page.reload({ waitUntil: 'networkidle0' });
+    check('title language survives reload', await evaluate(selector =>
+      document.querySelector(selector)?.getAttribute('aria-checked') === 'true' &&
+      document.querySelector('.spotlight h1')?.textContent === 'Portul noaptea', languageSwitch));
+    await page.focus(languageSwitch);
+    await page.keyboard.press('Enter');
+    check('English restores the English title', await evaluate(() =>
+      document.querySelector('.spotlight h1')?.textContent === 'The Harbour at Night'));
 
     // Home
     const rows = await evaluate(() => [...document.querySelectorAll('.row h2')].map(h => h.textContent.trim()));
