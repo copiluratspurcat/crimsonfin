@@ -206,13 +206,20 @@ def subliminal_candidate(video, duration):
 ROMANIAN_ISO = ("ro", "rum", "ron")
 DUMP_NAME = re.compile(r"^(\d+)(x+)\.db$")
 MAX_ZIP_MEMBER = 5_000_000
+ONLINE_RETRY = 7 * 86400    # online providers: retry a title weekly
+LOCAL_RETRY = 30 * 86400    # local dataset: changes only when new dump releases are added
+
+
+def readonly_sqlite(path):
+    """Open a SQLite file read-only; as_uri() escapes '?', '#' and '%' in the path."""
+    return sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
 
 
 class LocalDataset:
     """Romanian subtitle lookups against a local opensubtitles.org dump."""
 
     def __init__(self, metadata_db, dump_dirs):
-        self.metadata = sqlite3.connect(f"file:{metadata_db}?mode=ro", uri=True)
+        self.metadata = readonly_sqlite(metadata_db)
         self.ranged, self.unranged = [], []
         for folder in dump_dirs:
             for path in sorted(Path(folder).rglob("*.db")):
@@ -255,7 +262,7 @@ class LocalDataset:
 
     def _connection(self, path):
         if path not in self._connections:
-            self._connections[path] = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            self._connections[path] = readonly_sqlite(path)
         return self._connections[path]
 
     def zipped(self, num):
@@ -295,7 +302,8 @@ def srt_from_zip(blob):
             best = max(entries, key=lambda e: e.file_size)
             with archive.open(best) as member:
                 return member.read(MAX_ZIP_MEMBER + 1)[:MAX_ZIP_MEMBER]
-    except (zipfile.BadZipFile, OSError, RuntimeError):
+    except Exception:  # BadZipFile, zlib.error, EOFError, NotImplementedError (e.g. deflate64), ...
+        # One damaged archive in the dump must not stop the whole scan.
         return None
 
 
@@ -341,6 +349,13 @@ def load_state():
 
 def save_state(state):
     DATA.mkdir(parents=True, exist_ok=True)
+    # Retry timestamps past their cooldown carry no information; dropping them keeps the
+    # file small (the gateway's admin status page reads it).
+    now = time.time()
+    for key, keep in (("attempts", ONLINE_RETRY), ("localAttempts", LOCAL_RETRY)):
+        log = state.get(key)
+        if isinstance(log, dict):
+            state[key] = {k: v for k, v in log.items() if isinstance(v, (int, float)) and now - v < keep}
     tmp = STATE_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.chmod(0o600)
@@ -373,7 +388,8 @@ def main():
     if dataset:
         print(f"Local OpenSubtitles dataset: {len(dataset.ranged) + len(dataset.unranged)} dump file(s)")
     state = load_state()
-    attempts = state.setdefault("attempts", {})
+    attempts = state.setdefault("attempts", {})            # online providers
+    local_attempts = state.setdefault("localAttempts", {})  # local dataset
     summary = {"checked": 0, "haveRomanian": 0, "possiblyMissing": 0, "attempted": 0, "installed": 0}
     pending = []
     for item in items:
@@ -385,51 +401,62 @@ def main():
             summary["haveRomanian"] += 1
             continue
         summary["possiblyMissing"] += 1
-        last = attempts.get(item.get("Id"), 0)
-        if not last or time.time() - last >= 7 * 86400:
-            pending.append((item, path))
+        online_due = time.time() - attempts.get(item.get("Id"), 0) >= ONLINE_RETRY
+        local_due = bool(dataset) and time.time() - local_attempts.get(item.get("Id"), 0) >= LOCAL_RETRY
+        if online_due or local_due:
+            pending.append((item, path, online_due, local_due))
     # Newer items get a chance first; exhausted providers are retried weekly.
     pending.sort(key=lambda row: row[1].stat().st_mtime, reverse=True)
-    if options.apply:
-        # The local dataset is tried first (no network, no daily quota); online providers keep
-        # their small per-scan limit and only run for titles the dataset could not cover.
-        local_used = online_used = 0
-        for item, path in pending:
-            if (not dataset or local_used >= local_limit) and online_used >= limit:
-                break
-            # Embedded Romanian captions require no external file.
-            if has_romanian(item, path):
-                continue
-            duration = (item.get("RunTimeTicks") or 0) / 10_000_000
-            content, result = None, ""
-            if dataset and local_used < local_limit:
-                local_used += 1
-                content, result = dataset_candidate(dataset, item, series_imdb.get(item.get("SeriesId")), path, duration)
-            if not content and online_used < limit:
-                online_used += 1
-                content, online_result = subliminal_candidate(path, duration)
-                result = f"{result} · {online_result}" if result else online_result
-            if not result:
-                continue
-            summary["attempted"] += 1
-            attempts[item["Id"]] = time.time()
-            print(f'  {item.get("SeriesName") or item.get("Name")} : {result}')
-            if not content:
-                continue
-            target = path.with_name(path.stem + ".ro.srt")
-            # "xb" refuses to overwrite user-managed or other services' files.
-            try:
-                with target.open("xb") as file:
-                    file.write(content)
-            except FileExistsError:
-                continue
-            summary["installed"] += 1
-            refresh_jellyfin(item, cfg)
-    state["lastScanUtc"] = dt.datetime.now(dt.timezone.utc).isoformat()
-    state["lastSummary"] = summary
-    save_state(state)
+    try:
+        if options.apply:
+            apply_pending(pending, dataset, series_imdb, attempts, local_attempts, summary, cfg, limit, local_limit)
+    finally:
+        # Saved even if a scan fails part-way, so finished lookups are not repeated.
+        state["lastScanUtc"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        state["lastSummary"] = summary
+        save_state(state)
     print(json.dumps(summary))
     print("No machine translation is performed; existing subtitles are never overwritten.")
+
+
+def apply_pending(pending, dataset, series_imdb, attempts, local_attempts, summary, cfg, limit, local_limit):
+    # The local dataset is tried first (no network, no daily quota); online providers keep
+    # their small per-scan limit and only run for titles the dataset could not cover.
+    local_used = online_used = 0
+    for item, path, online_due, local_due in pending:
+        if (not dataset or local_used >= local_limit) and online_used >= limit:
+            break
+        # Embedded Romanian captions require no external file.
+        if has_romanian(item, path):
+            continue
+        duration = (item.get("RunTimeTicks") or 0) / 10_000_000
+        content, result = None, ""
+        # Each source has its own cooldown: a local miss must not hold a title back from
+        # the online providers (or the other way round).
+        if local_due and dataset and local_used < local_limit:
+            local_used += 1
+            local_attempts[item["Id"]] = time.time()
+            content, result = dataset_candidate(dataset, item, series_imdb.get(item.get("SeriesId")), path, duration)
+        if not content and online_due and online_used < limit:
+            online_used += 1
+            attempts[item["Id"]] = time.time()
+            content, online_result = subliminal_candidate(path, duration)
+            result = f"{result} · {online_result}" if result else online_result
+        if not result:
+            continue
+        summary["attempted"] += 1
+        print(f'  {item.get("SeriesName") or item.get("Name")} : {result}')
+        if not content:
+            continue
+        target = path.with_name(path.stem + ".ro.srt")
+        # "xb" refuses to overwrite user-managed or other services' files.
+        try:
+            with target.open("xb") as file:
+                file.write(content)
+        except FileExistsError:
+            continue
+        summary["installed"] += 1
+        refresh_jellyfin(item, cfg)
 
 
 if __name__ == "__main__":

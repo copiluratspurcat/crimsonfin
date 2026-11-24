@@ -37,3 +37,11 @@ test('RSS feeds without category tags are searchable; mixed feeds still drop unt
     '<item><title>Inside.Unknown</title></item><item><title>Inside.Game</title><category>9</category></item></channel></rss>';
   assert.deepEqual(parseFilelistRss(mixed, 'inside').results.map(r => r.name), ['Inside.Out.2.2024.1080p']);
 });
+
+test('untagged RSS feeds keep only video releases', () => {
+  const feed = '<rss><channel>' + ['Inside.Out.2.2024.1080p.WEB-DL', 'Inside.Job.S01E02.HDTV.x264',
+    'Inside.Game.v1.2-CODEX', 'Inside.Software.Pro.2026.Multilingual', 'Inside.OST.FLAC']
+    .map(t => `<item><title>${t}</title></item>`).join('') + '</channel></rss>';
+  assert.deepEqual(parseFilelistRss(feed, 'inside').results.map(r => r.name),
+    ['Inside.Out.2.2024.1080p.WEB-DL', 'Inside.Job.S01E02.HDTV.x264']);
+});

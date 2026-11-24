@@ -245,7 +245,7 @@ export function DetailsPage({ item, nextUp, onBack, onPlay, onChanged }: {
             <span className="ep-text"><strong>{ep.Name}{ep.UserData?.Played && <Check className="ok" aria-label="Watched" />}</strong>
               {ep.Overview && <small>{ep.Overview}</small>}</span>
             <span className={now ? 'ep-time accent' : 'ep-time'}>{now && minutesLeft(ep) ? minutesLeft(ep) : runtime(ep.RunTimeTicks)}</span>
-          </button><CardMenu item={ep} onOpen={() => {}} className="episode-menu" /></li>;
+          </button><CardMenu item={ep} className="episode-menu" /></li>;
         })}</ol> : <Empty>No episodes in this season.</Empty>}
     </section>}
   </div>;
