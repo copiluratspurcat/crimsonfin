@@ -15,6 +15,13 @@ handoff tools (#6). PRs #5 and #6 originally merged into intermediate branches.
 The FileList scope remains Movies, TV Shows, and Anime. The release workflow
 pins the tag to the commit that built the assets.
 
+## Local-only subtitles
+
+The subtitle audit accepts `--local-only` to disable internet providers. It
+requires a configured local metadata index and at least one dump. The
+`scripts/build-opensubs-index.py` helper builds a Romanian-only index from the
+published compressed metadata export.
+
 ## Verified
 - Automated tests: `npm test` (46 pass, 1 skipped on Windows), `npm run test:py` (16), typecheck, build.
 - `npm run test:visual`: 37 checks across the PC and TV layouts against the mock gateway.
