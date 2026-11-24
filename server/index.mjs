@@ -399,6 +399,30 @@ export function createAppServer(options = {}) {
           await jellyfin(`/Users/${user.userId}/FavoriteItems/${safeId(favorite[1])}`, user, { method: req.method });
           return json(res, 200, { ok: true });
         }
+        // Intro / credits markers for "Skip intro" and the next-episode prompt. Jellyfin 10.10+
+        // exposes MediaSegments; older servers may have the Intro Skipper plugin. Neither is required.
+        const segments = pathname.match(/^\/api\/items\/([\w-]+)\/segments$/);
+        if (segments && req.method === 'GET') {
+          const id = safeId(segments[1]);
+          const span = (start, end) => Number.isFinite(start) && Number.isFinite(end) && end > start ? { start, end } : null;
+          const optional = async relative => {
+            try { return await jellyfin(relative, user); }
+            catch (error) { if (error?.status === 401) throw error; return null; }
+          };
+          const found = { intro: null, credits: null };
+          const media = await optional(`/MediaSegments/${id}?includeSegmentTypes=Intro&includeSegmentTypes=Outro`);
+          for (const s of Array.isArray(media?.Items) ? media.Items : []) {
+            const value = span(Number(s?.StartTicks) / 1e7, Number(s?.EndTicks) / 1e7);
+            if (s?.Type === 'Intro' && !found.intro) found.intro = value;
+            if (s?.Type === 'Outro' && !found.credits) found.credits = value;
+          }
+          if (!found.intro && !found.credits) {
+            const plugin = await optional(`/Episode/${id}/IntroSkipperSegments`);
+            found.intro = span(Number(plugin?.Introduction?.IntroStart), Number(plugin?.Introduction?.IntroEnd));
+            found.credits = span(Number(plugin?.Credits?.IntroStart), Number(plugin?.Credits?.IntroEnd));
+          }
+          return json(res, 200, found);
+        }
         // Watch history. Jellyfin 10.9 moved these user-data endpoints; try the
         // classic route first and fall back to the newer one if it fails.
         const played = pathname.match(/^\/api\/items\/([\w-]+)\/played$/);

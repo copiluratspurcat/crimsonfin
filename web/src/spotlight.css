@@ -398,6 +398,13 @@ main#content { min-height: 100vh; }
 .setting-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .setting-text strong { font-size: var(--fs-body); font-weight: 600; }
 .setting-text small, .setting > small, .setting .muted { font-size: var(--fs-xs); color: var(--text-3); }
+.toggle { position: relative; width: 44px; height: 26px; border-radius: 13px; background: var(--s3); flex-shrink: 0; transition: background .15s; }
+.toggle i { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--text); transition: transform .18s var(--ease); }
+.toggle.on { background: var(--accent); }
+.toggle.on i { transform: translateX(18px); }
+.crimsonfin-tv .toggle { width: calc(64 * var(--u)); height: calc(36 * var(--u)); border-radius: calc(18 * var(--u)); }
+.crimsonfin-tv .toggle i { top: calc(4 * var(--u)); left: calc(4 * var(--u)); width: calc(28 * var(--u)); height: calc(28 * var(--u)); }
+.crimsonfin-tv .toggle.on i { transform: translateX(calc(28 * var(--u))); }
 .swatches { display: flex; gap: 12px; }
 .swatch { width: 26px; height: 26px; border-radius: 50%; }
 .swatch.active { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus); }
@@ -518,6 +525,30 @@ html:has(.player) { overflow: hidden; }
 .crimsonfin-tv .player input[type='range']::-webkit-slider-thumb { width: calc(28 * var(--u)); height: calc(28 * var(--u)); margin-top: calc(-10 * var(--u)); }
 .crimsonfin-tv .player-panel { right: var(--pad); bottom: calc(220 * var(--u)); width: calc(640 * var(--u)); padding: calc(28 * var(--u)); gap: calc(20 * var(--u)); }
 .crimsonfin-tv .player video::cue { font-size: 130%; }
+/* Subtitle size / background preferences (Settings → Subtitles). */
+.player.cue-large video::cue { font-size: 140%; }
+.player.cue-xlarge video::cue { font-size: 175%; }
+.player.cue-bg-shadow video::cue { background: transparent; text-shadow: 0 0 4px #000, 0 2px 3px #000, 0 0 10px #000; }
+.player.cue-bg-none video::cue { background: transparent; text-shadow: none; }
+.crimsonfin-tv .player.cue-large video::cue { font-size: 165%; }
+.crimsonfin-tv .player.cue-xlarge video::cue { font-size: 200%; }
+.skip-intro { position: absolute; z-index: 4; right: 24px; bottom: 120px; padding: 12px 22px; border-radius: var(--radius); background: rgb(24 22 27 / .92);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / .35); color: var(--text); font-size: var(--fs-m); font-weight: 600; }
+.skip-intro:hover, .skip-intro:focus-visible { background: var(--focus); color: var(--bg); }
+.up-next { position: absolute; z-index: 5; right: 24px; bottom: 120px; display: flex; align-items: center; gap: 14px; width: min(520px, calc(100vw - 48px));
+  padding: 12px; border-radius: 14px; background: rgb(24 22 27 / .96); box-shadow: 0 20px 50px rgb(0 0 0 / .6); animation: pop .2s var(--ease); }
+.up-next-art { width: 132px; aspect-ratio: 16 / 9; border-radius: var(--radius-s); overflow: hidden; background: var(--s2); flex-shrink: 0; }
+.up-next-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.up-next-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.up-next-text small { font-size: var(--fs-xs); color: var(--accent-soft); font-weight: 600; font-variant-numeric: tabular-nums; }
+.up-next-text strong { font-size: var(--fs-s); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.up-next .actions { padding: 0; flex-direction: column; align-items: stretch; gap: 6px; }
+.crimsonfin-tv .skip-intro { right: var(--pad); bottom: calc(230 * var(--u)); padding: calc(18 * var(--u)) calc(32 * var(--u)); }
+.crimsonfin-tv .skip-intro:focus { background: var(--focus); color: var(--bg); }
+.crimsonfin-tv .up-next { right: var(--pad); bottom: calc(230 * var(--u)); width: calc(760 * var(--u)); padding: calc(16 * var(--u)); gap: calc(20 * var(--u)); }
+.crimsonfin-tv .up-next-art { width: calc(200 * var(--u)); }
+.crimsonfin-tv .up-next .btn:focus { background: var(--focus); color: var(--bg); }
+
 .dialog { padding: 22px; border: 0; border-radius: 14px; background: var(--s1); color: var(--text); width: min(400px, calc(100% - 28px)); box-shadow: 0 20px 50px rgb(0 0 0 / .6); }
 .dialog::backdrop { background: rgb(0 0 0 / .6); }
 .dialog h2 { font-size: var(--fs-l); margin-bottom: 18px; }

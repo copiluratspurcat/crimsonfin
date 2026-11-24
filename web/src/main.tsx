@@ -106,7 +106,7 @@ function App() {
         {(tab === 'settings' || tab === 'downloads' || tab === 'admin') && <SettingsPage user={user} tab={tab} onTab={goTab} onSignOut={() => logout.mutate()} />}
       </>}
     </main>
-    {playing && <Player key={playing.Id} item={playing} onClose={() => {
+    {playing && <Player key={playing.Id} item={playing} onNext={next => setPlaying(next as Item)} onClose={() => {
       setPlaying(null);
       for (const key of ['resume', 'nextup', 'movies', 'series', 'library', 'item', 'episodes']) void qc.invalidateQueries({ queryKey: [key] });
     }} />}

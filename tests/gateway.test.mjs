@@ -41,6 +41,9 @@ function upstream(isRevoked = () => false) {
     }
     res.setHeader('content-type', 'application/json');
     if (p.pathname.endsWith('/Items')) itemQueries.push(p.searchParams);
+    if (p.pathname === `/MediaSegments/${VIDEO}`) { res.end(JSON.stringify({ Items: [
+      { Type: 'Intro', StartTicks: 12e7, EndTicks: 92e7 }, { Type: 'Outro', StartTicks: 2500e7, EndTicks: 2600e7 }] })); return; }
+    if (p.pathname.startsWith('/MediaSegments/') || p.pathname.includes('/IntroSkipperSegments')) { res.writeHead(404); res.end(); return; }
     if (p.pathname === '/Genres') { res.end(JSON.stringify({ Items: [{ Name: 'Drama' }, { Name: 'Comedie' }] })); return; }
     if (p.pathname.endsWith('/Items') || p.pathname.includes('/Items/')) { res.end(JSON.stringify({ Items: [{ Id: VIDEO, Name: 'Test Movie', Type: 'Movie' }], TotalRecordCount: 1 })); return; }
     res.end('{"Items":[],"TotalRecordCount":0}');
@@ -77,6 +80,10 @@ test('login uses per-user token, encrypted storage, cookies, and authorization b
   assert.deepEqual(Object.fromEntries(['IncludeItemTypes', 'StartIndex', 'Limit', 'SortBy', 'SortOrder', 'Genres', 'Filters'].map(k => [k, sent.get(k)])),
     { IncludeItemTypes: 'Series', StartIndex: '120', Limit: '200', SortBy: 'SortName', SortOrder: 'Ascending', Genres: 'Drama', Filters: 'IsFavorite' });
   assert.deepEqual(await (await request('/api/genres?type=movie', cookie)).json(), { genres: ['Drama', 'Comedie'] });
+  // Intro/credits markers from MediaSegments (seconds); missing segments are simply null.
+  assert.deepEqual(await (await request(`/api/items/${VIDEO}/segments`, cookie)).json(),
+    { intro: { start: 12, end: 92 }, credits: { start: 2500, end: 2600 } });
+  assert.deepEqual(await (await request('/api/items/bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb/segments', cookie)).json(), { intro: null, credits: null });
   const record = gateway.db.prepare('SELECT token_enc FROM sessions LIMIT 1').get();
   assert.doesNotMatch(record.token_enc, /jellyfin-private-token-123/);
   assert.equal((await request('/api/admin/status', cookie)).status, 403);
