@@ -12,3 +12,9 @@ desktop/config.json
 .env.*.local
 
 tls/
+
+# Browser smoke test screenshots, Python bytecode
+tests/visual/out/
+__pycache__/
+# Original source photo for the logo (has a person in the background): never commit
+C55767FA-E12A-4B1B-832A-B433FEC7E49E.jpg
