@@ -15,7 +15,7 @@ ROMANIAN = {"ro", "rum", "ron"}
 
 
 def number(value):
-    value = value.strip().removeprefix("tt")
+    value = value.strip().strip('\"').removeprefix("tt")
     return int(value) if value.isascii() and value.isdecimal() and len(value) <= 12 else None
 
 
@@ -43,9 +43,9 @@ def build(source, output):
                         if len(fields) != len(header):
                             skipped += 1
                             continue
-                        if fields[lang_index].strip().lower() not in ROMANIAN:
+                        if fields[lang_index].strip().strip('\"').lower() not in ROMANIAN:
                             continue
-                        row = [fields[index] for index in indexes]
+                        row = [fields[index].strip('\"') for index in indexes]
                         if number(row[0]) is None:
                             skipped += 1
                             continue
