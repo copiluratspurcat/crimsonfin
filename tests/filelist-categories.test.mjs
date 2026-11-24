@@ -37,3 +37,12 @@ test('RSS results require an allowed category', () => {
     '<item><title>Inside.Unknown</title></item><item><title>Inside.Game</title><category>9</category></item></channel></rss>';
   assert.deepEqual(parseFilelistRss(mixed, 'inside').results.map(r => r.name), ['Inside.Out.2.2024.1080p']);
 });
+
+test('English labels from the live API map to the same allowed category IDs', () => {
+  const labels = ['Movies 4K', 'Movies HD', 'Movies Blu-Ray', 'Movies HD-RO',
+    'Movies 4K Blu-Ray', 'Movies SD', 'TV-Series HD', 'TV-Series SD', 'Anime',
+    'Games', 'Documentaries', 'Movies Other'];
+  const rows = labels.map((category, index) => ({ id: index + 1, name: 'Release ' + index, category }));
+  assert.deepEqual(parseFilelistApiResults(rows).results.map(row => row.category), labels.slice(0, 9));
+  assert.deepEqual(parseFilelistApiResults(rows, '21').results.map(row => row.category), ['TV-Series HD']);
+});

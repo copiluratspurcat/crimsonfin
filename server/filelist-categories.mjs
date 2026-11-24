@@ -1,4 +1,4 @@
-// FileList categories, as mapped by the FlexGet FileList API integration.
+// FileList may return an ID, a Romanian label, or an English label.
 const media = new Map([
   ['1', 'Filme SD'], ['2', 'Filme DVD'], ['3', 'Filme DVD-RO'],
   ['4', 'Filme HD'], ['6', 'Filme 4K'], ['19', 'Filme HD-RO'],
@@ -7,6 +7,13 @@ const media = new Map([
   ['24', 'Anime']
 ]);
 const normalize = value => String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+const categoryIds = new Map();
+for (const [id, label] of media) {
+  categoryIds.set(id, id);
+  categoryIds.set(normalize(label), id);
+  const english = label.replace(/^Filme /, 'Movies ').replace(/^Seriale /, 'TV-Series ');
+  categoryIds.set(normalize(english), id);
+}
 
 /** True when a category value is absent or blank (treated as "not declared"). */
 export function isBlankCategory(value) {
@@ -28,7 +35,6 @@ export function allowedFilelistCategories(requested) {
 }
 
 export function isFilelistMediaCategory(value, categories = allowedFilelistCategories('')) {
-  const normalized = normalize(value);
-  return Boolean(normalized) && categories.split(',').some(id => media.has(id)
-    && (normalized === id || normalized === normalize(media.get(id))));
+  const id = categoryIds.get(normalize(value));
+  return id !== undefined && categories.split(',').includes(id);
 }
