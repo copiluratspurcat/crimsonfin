@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
 """Non-AI Romanian subtitle auditor for CrimsonFin.
 
-Scans Jellyfin media metadata for missing Romanian captions. On --apply, tries
-community subtitle providers, validates SRT timing, and installs *only* missing
-sidecars atomically. Never translates English, never replaces an existing file,
-and never downloads a torrent or modifies a video file.
+Scans Jellyfin media metadata for missing Romanian captions. On --apply, looks
+them up first in a local copy of the opensubtitles.org dataset (if configured:
+no network, no daily quota), then in community subtitle providers; validates SRT
+timing and language, and installs *only* missing sidecars atomically. Never
+translates English, never replaces an existing file, and never downloads a
+torrent or modifies a video file.
 """
 from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 import subprocess
 import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
@@ -63,25 +68,36 @@ def jf(url, cfg, method="GET"):
         return json.loads(response.read(10_000_000))
 
 
-def all_items(cfg):
+def admin_id(cfg):
     users = jf("/Users", cfg)
     admin = next((u for u in users if u.get("Policy", {}).get("IsAdministrator")), None)
     if not admin:
         raise RuntimeError("No administrator metadata user found")
+    return admin["Id"]
+
+
+def all_items(cfg, types="Movie,Episode", fields="Path,MediaSources,ProviderIds", user=None):
+    user = user or admin_id(cfg)
     start = 0
     items = []
     while start < 15_000:
         params = urllib.parse.urlencode({
-            "Recursive": "true", "IncludeItemTypes": "Movie,Episode",
-            "StartIndex": start, "Limit": "500", "Fields": "Path,MediaSources",
+            "Recursive": "true", "IncludeItemTypes": types,
+            "StartIndex": start, "Limit": "500", "Fields": fields,
         })
-        page = jf("/Users/" + admin["Id"] + "/Items?" + params, cfg)
+        page = jf("/Users/" + user + "/Items?" + params, cfg)
         batch = page.get("Items") or []
         items.extend(batch)
         if not batch or start + len(batch) >= page.get("TotalRecordCount", len(items)):
             break
         start += len(batch)
     return items
+
+
+def series_imdb_ids(cfg, user):
+    """Series Jellyfin id -> numeric IMDb id (episodes are indexed by their show's IMDb id)."""
+    return {s["Id"]: imdb_number((s.get("ProviderIds") or {}).get("Imdb"))
+            for s in all_items(cfg, types="Series", fields="ProviderIds", user=user)}
 
 
 def approved_video(item):
@@ -181,6 +197,138 @@ def subliminal_candidate(video, duration):
         return None, "no verified Romanian subtitle available"
 
 
+# --- Local OpenSubtitles.org dataset (no network, no daily quota) -------------------------
+# Uses a local copy of the published opensubtitles.org dump (github.com/milahu/opensubtitles-scraper):
+#   OPENSUBS_METADATA_DB  subtitles_all.db built from the official subtitles_all.txt.gz export
+#                         (table subz_metadata: IDSubtitle, ImdbID, ISO639, SeriesIMDBParent, ...)
+#   OPENSUBS_DUMP_DIRS    folders separated by ':' (';' on Windows) holding release/shard SQLite files whose
+#                         `zipfiles(num, name, content)` rows are individually zipped subtitles.
+ROMANIAN_ISO = ("ro", "rum", "ron")
+DUMP_NAME = re.compile(r"^(\d+)(x+)\.db$")
+MAX_ZIP_MEMBER = 5_000_000
+
+
+class LocalDataset:
+    """Romanian subtitle lookups against a local opensubtitles.org dump."""
+
+    def __init__(self, metadata_db, dump_dirs):
+        self.metadata = sqlite3.connect(f"file:{metadata_db}?mode=ro", uri=True)
+        self.ranged, self.unranged = [], []
+        for folder in dump_dirs:
+            for path in sorted(Path(folder).rglob("*.db")):
+                match = DUMP_NAME.match(path.name)
+                if match:  # e.g. 95xxxxx.db covers 9500000-9599999, 9512xxx.db covers 9512000-9512999
+                    size = 10 ** len(match.group(2))
+                    base = int(match.group(1)) * size
+                    self.ranged.append((base, base + size, path))
+                elif path.resolve() != Path(metadata_db).resolve():
+                    self.unranged.append(path)
+        self._connections = {}
+
+    @classmethod
+    def from_config(cls, cfg):
+        metadata = cfg.get("OPENSUBS_METADATA_DB", "").strip()
+        dirs = [d for d in cfg.get("OPENSUBS_DUMP_DIRS", "").split(os.pathsep) if d.strip()]
+        if not metadata or not dirs or not Path(metadata).is_file():
+            return None
+        return cls(metadata, [d.strip() for d in dirs if Path(d.strip()).is_dir()])
+
+    def candidates(self, imdb=None, series_imdb=None, season=None, episode=None):
+        """Romanian subtitle IDs for a movie (IMDb) or an episode (series IMDb + S/E)."""
+        marks = ",".join("?" * len(ROMANIAN_ISO))
+        rows = []
+        if series_imdb and season is not None and episode is not None:
+            rows += self.metadata.execute(
+                f"SELECT IDSubtitle, MovieReleaseName, SubSumCD, SubAddDate FROM subz_metadata "
+                f"WHERE SeriesIMDBParent=? AND SeriesSeason=? AND SeriesEpisode=? AND ISO639 IN ({marks})",
+                (series_imdb, season, episode, *ROMANIAN_ISO)).fetchall()
+        if imdb:
+            rows += self.metadata.execute(
+                f"SELECT IDSubtitle, MovieReleaseName, SubSumCD, SubAddDate FROM subz_metadata "
+                f"WHERE ImdbID=? AND ISO639 IN ({marks})", (imdb, *ROMANIAN_ISO)).fetchall()
+        seen, unique = set(), []
+        for row in rows:
+            if row[0] not in seen:
+                seen.add(row[0])
+                unique.append(row)
+        return unique
+
+    def _connection(self, path):
+        if path not in self._connections:
+            self._connections[path] = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        return self._connections[path]
+
+    def zipped(self, num):
+        """The zipped subtitle for an opensubtitles.org ID, or None if no local file has it."""
+        files = [p for lo, hi, p in self.ranged if lo <= num < hi] + self.unranged
+        for path in files:
+            try:
+                row = self._connection(path).execute("SELECT content FROM zipfiles WHERE num=?", (num,)).fetchone()
+            except sqlite3.Error:
+                continue
+            if row and row[0]:
+                return bytes(row[0])
+        return None
+
+
+def release_tokens(name):
+    return {t for t in re.split(r"[^a-z0-9]+", (name or "").lower()) if len(t) > 1}
+
+
+def rank_candidates(rows, video_name):
+    """Prefer single-file subtitles whose release name shares tokens with the video, then newest."""
+    wanted = release_tokens(Path(video_name).stem)
+    def score(row):
+        _, release, cds, added = row
+        return (len(wanted & release_tokens(release)), 1 if (cds or 1) == 1 else 0, str(added or ""))
+    return sorted(rows, key=score, reverse=True)
+
+
+def srt_from_zip(blob):
+    """Largest .srt inside a subtitle zip, with size/entry limits against malformed archives."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(blob)) as archive:
+            entries = [e for e in archive.infolist()[:20]
+                       if e.filename.lower().endswith(".srt") and 0 < e.file_size <= MAX_ZIP_MEMBER]
+            if not entries:
+                return None
+            best = max(entries, key=lambda e: e.file_size)
+            with archive.open(best) as member:
+                return member.read(MAX_ZIP_MEMBER + 1)[:MAX_ZIP_MEMBER]
+    except (zipfile.BadZipFile, OSError, RuntimeError):
+        return None
+
+
+def imdb_number(value):
+    match = re.fullmatch(r"(?:tt)?0*(\d{1,10})", str(value or "").strip())
+    return int(match.group(1)) if match else None
+
+
+def dataset_candidate(dataset, item, series_imdb, video, duration, tries=6):
+    """A validated Romanian subtitle from the local dataset, or (None, reason)."""
+    imdb = imdb_number((item.get("ProviderIds") or {}).get("Imdb"))
+    episode = item.get("Type") == "Episode"
+    rows = dataset.candidates(imdb=imdb, series_imdb=series_imdb if episode else None,
+                              season=item.get("ParentIndexNumber"), episode=item.get("IndexNumber"))
+    if not rows:
+        return None, "not in local dataset index" if (imdb or series_imdb) else "no IMDb id in Jellyfin"
+    missing = 0
+    for num, *_ in rank_candidates(rows, video.name)[:tries]:
+        blob = dataset.zipped(num)
+        if blob is None:
+            missing += 1
+            continue
+        srt = srt_from_zip(blob)
+        if not srt:
+            continue
+        valid, desc = validate_srt(srt, duration)
+        if valid:
+            return valid, f"local OpenSubtitles dataset #{num} · {desc}"
+    if missing == min(len(rows), tries):
+        return None, "indexed, but not in the downloaded dump releases"
+    return None, "local dataset matches failed validation"
+
+
 def load_state():
     try:
         state = json.loads(STATE_PATH.read_text())
@@ -211,11 +359,19 @@ def refresh_jellyfin(item, cfg):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Add validated human-provider subtitles that are missing")
-    parser.add_argument("--limit", type=int, default=4, help="Maximum provider lookups per scan (1-10)")
+    parser.add_argument("--limit", type=int, default=4, help="Maximum online provider lookups per scan (1-10)")
+    parser.add_argument("--local-limit", type=int, default=200,
+                        help="Maximum local OpenSubtitles dataset lookups per scan (no network, 1-5000)")
     options = parser.parse_args()
     limit = min(10, max(1, options.limit))
+    local_limit = min(5000, max(1, options.local_limit))
     cfg = environment()
-    items = all_items(cfg)
+    user = admin_id(cfg)
+    items = all_items(cfg, user=user)
+    dataset = LocalDataset.from_config(cfg)
+    series_imdb = series_imdb_ids(cfg, user) if dataset else {}
+    if dataset:
+        print(f"Local OpenSubtitles dataset: {len(dataset.ranged) + len(dataset.unranged)} dump file(s)")
     state = load_state()
     attempts = state.setdefault("attempts", {})
     summary = {"checked": 0, "haveRomanian": 0, "possiblyMissing": 0, "attempted": 0, "installed": 0}
@@ -235,14 +391,28 @@ def main():
     # Newer items get a chance first; exhausted providers are retried weekly.
     pending.sort(key=lambda row: row[1].stat().st_mtime, reverse=True)
     if options.apply:
-        for item, path in pending[:limit]:
+        # The local dataset is tried first (no network, no daily quota); online providers keep
+        # their small per-scan limit and only run for titles the dataset could not cover.
+        local_used = online_used = 0
+        for item, path in pending:
+            if (not dataset or local_used >= local_limit) and online_used >= limit:
+                break
             # Embedded Romanian captions require no external file.
             if has_romanian(item, path):
                 continue
             duration = (item.get("RunTimeTicks") or 0) / 10_000_000
+            content, result = None, ""
+            if dataset and local_used < local_limit:
+                local_used += 1
+                content, result = dataset_candidate(dataset, item, series_imdb.get(item.get("SeriesId")), path, duration)
+            if not content and online_used < limit:
+                online_used += 1
+                content, online_result = subliminal_candidate(path, duration)
+                result = f"{result} · {online_result}" if result else online_result
+            if not result:
+                continue
             summary["attempted"] += 1
             attempts[item["Id"]] = time.time()
-            content, result = subliminal_candidate(path, duration)
             print(f'  {item.get("SeriesName") or item.get("Name")} : {result}')
             if not content:
                 continue
