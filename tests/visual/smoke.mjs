@@ -154,6 +154,7 @@ async function run(mode, executablePath) {
     await tab('Shows');
     await evaluate(() => [...document.querySelectorAll('.view:not([hidden]) .poster-card .card-hit')].find(b => b.textContent.includes('Northbound'))?.click());
     await wait(1500);
+    check('English mode uses the localized Jellyfin name', await evaluate(() => document.querySelector('.details h1')?.textContent === 'Northbound'));
     check('series page lists episodes', await evaluate(() => document.querySelectorAll('.episode').length) > 0);
     await shot('11-details');
     await evaluate(() => document.querySelector('.episode-menu')?.click()); await wait(400);
@@ -166,8 +167,10 @@ async function run(mode, executablePath) {
     check('Skip intro appears in the intro', await evaluate(() => !!document.querySelector('.skip-intro')));
     await shot('12-player');
     const cc = () => evaluate(() => document.querySelector('.player [aria-pressed][aria-label*="ubtitle"]')?.getAttribute('aria-pressed'));
-    check('player automatically selects English after the menu switch', await evaluate(() =>
-      !!document.querySelector('.player [aria-label="Subtitles: English (C)"][aria-pressed="true"]')));
+    check('Auto retries a broken subtitle with a same-language track and loads its cues', await evaluate(() => {
+      const track = document.querySelector('.player video track');
+      return track?.src.endsWith('/5/Stream.vtt') && track.track.mode === 'showing' && track.track.cues?.length === 1;
+    }));
     const optionsButton = '[aria-label="Audio, subtitles and quality"]';
     await page.click(optionsButton);
     const subtitles = '.player-panel .field select';

@@ -26,7 +26,6 @@ export function useMediaTitle(item?: MediaTitle) {
   const fallback = release && Number(release[2]) === item?.ProductionYear
     ? release[1].replace(/[._]+/g, ' ').trim()
     : libraryTitle;
-  return query.data?.[language] ||
-    (language === 'en' && !isSeriesEpisode ? item?.OriginalTitle?.trim() : '') ||
-    fallback || '';
+  // OriginalTitle is the native release title. Jellyfin's Name is its localized display title.
+  return query.data?.[language] || fallback || (!isSeriesEpisode && item?.OriginalTitle?.trim()) || '';
 }

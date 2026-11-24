@@ -1,5 +1,5 @@
 import { useMediaTitle } from './titles';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { isTv } from './tv';
 import { buildHlsUrl } from './hls-url';
@@ -16,6 +16,7 @@ type StreamInfo = {
   Codec?: string;
   IsDefault?: boolean;
   IsExternal?: boolean;
+  IsForced?: boolean;
   DeliveryMethod?: string;
 };
 type MediaSource = { Id: string; MediaStreams?: StreamInfo[]; DefaultAudioStreamIndex?: number; DefaultSubtitleStreamIndex?: number };
@@ -64,6 +65,8 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
   const [quality, setQuality] = useState(12_000_000);
   const [audioChoice, setAudioChoice] = useState('auto');
   const [subtitleChoice, setSubtitleChoice] = useState('auto');
+  const [failedSubtitles, setFailedSubtitles] = useState<string[]>([]);
+  const subtitleElementRef = useRef<HTMLTrackElement>(null);
   const [subtitleDelay, setSubtitleDelay] = useState(0);
   const [autoSync, setAutoSync] = useState(true);
   const [syncState, setSyncState] = useState<{ url: string; ready: boolean } | null>(null);
@@ -109,13 +112,17 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
   const streams = source?.MediaStreams || [];
   const audioTracks = useMemo(() => streams.filter(s => s.Type === 'Audio'), [streams]);
   const subtitleTracks = useMemo(() => streams.filter(isSubtitleUsable), [streams]);
-  // 'Auto' follows the remembered subtitle language (set in the main menu, Settings, or the player).
-  const autoSubtitle = prefs.subtitleLanguage === 'off' ? undefined
-    : subtitleTracks.find(s => languageKey(s.Language) === prefs.subtitleLanguage);
-  const activeSubtitle = subtitleChoice === 'auto'
-    ? autoSubtitle?.Index.toString() ?? 'off'
-    : subtitleChoice;
-  const selectedSubtitle = subtitleTracks.find(s => String(s.Index) === activeSubtitle);
+  const preferredLanguage = languageKey(prefs.subtitleLanguage);
+  const matchingSubtitles = subtitleTracks.filter(t => languageKey(t.Language) === preferredLanguage)
+    .sort((a, b) => Number(!!a.IsForced) - Number(!!b.IsForced));
+  const trackKey = (track: StreamInfo) => `${source?.Id}:${track.Index}`;
+  const autoSubtitle = preferredLanguage === 'off' ? undefined
+    : matchingSubtitles.find(t => !failedSubtitles.includes(trackKey(t)));
+  const activeSubtitle = subtitleChoice === 'auto' ? autoSubtitle?.Index.toString() ?? 'off' : subtitleChoice;
+  const selectedSubtitle = subtitleTracks.find(t => String(t.Index) === activeSubtitle);
+  const subtitleUnavailable = selectedSubtitle
+    ? failedSubtitles.includes(trackKey(selectedSubtitle))
+    : subtitleChoice === 'auto' && preferredLanguage !== 'off' && matchingSubtitles.length > 0;
 
   const audioIndex = audioChoice === 'auto'
     ? audioTracks.find(track => track.Index === source?.DefaultAudioStreamIndex)?.Index ?? audioTracks[0]?.Index
@@ -123,11 +130,27 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
   const syncUrl = autoSync && source?.Id && selectedSubtitle && audioIndex !== undefined
     ? `/api/subtitle-sync/${encodeURIComponent(item.Id)}/${encodeURIComponent(source.Id)}/${selectedSubtitle.Index}/${audioIndex}`
     : null;
-  const alignedSubtitle = syncState?.url === syncUrl && syncState?.ready;
+  const alignedSubtitle = !!syncUrl && syncState?.url === syncUrl && syncState.ready
+    && !failedSubtitles.includes(syncUrl);
+  const subtitleUrl = source?.Id && selectedSubtitle
+    ? alignedSubtitle ? syncUrl : `/jellyfin/Videos/${encodeURIComponent(item.Id)}/${encodeURIComponent(source.Id)}/Subtitles/${selectedSubtitle.Index}/Stream.vtt`
+    : null;
+
+  const subtitleFailureKey = selectedSubtitle ? (alignedSubtitle ? syncUrl : trackKey(selectedSubtitle)) : null;
+  useLayoutEffect(() => {
+    const element = subtitleElementRef.current;
+    if (!element || !subtitleFailureKey) return;
+    const failure = subtitleFailureKey;
+    const onError = () => setFailedSubtitles(previous => previous.includes(failure) ? previous : [...previous, failure]);
+    element.addEventListener('error', onError);
+    if (element.readyState === HTMLTrackElement.ERROR) onError();
+    return () => element.removeEventListener('error', onError);
+  }, [subtitleUrl, subtitleFailureKey, subtitleUnavailable]);
 
   // Remember an explicit subtitle choice as the preferred language for next time.
   function chooseSubtitle(value: string) {
     setSubtitleChoice(value);
+    setFailedSubtitles([]);
     if (value === 'off') setPrefs({ subtitleLanguage: 'off' });
     else if (value !== 'auto') {
       const lang = languageKey(subtitleTracks.find(s => String(s.Index) === value)?.Language);
@@ -360,31 +383,34 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    const tracks = video.textTracks;
+    const track = subtitleElementRef.current?.track;
+    if (!track || subtitleUnavailable) return;
     const adjust = () => {
-      for (let index = 0; index < tracks.length; index++) {
-        const track = tracks[index];
-        const shouldShow = !!selectedSubtitle && track.language === (selectedSubtitle.Language || 'und')
-          && track.label.endsWith(' · ' + selectedSubtitle.Index);
-        track.mode = shouldShow ? 'showing' : 'disabled';
-        if (!shouldShow || !track.cues) continue;
-        for (let i = 0; i < track.cues.length; i++) {
-          const cue = track.cues[i];
-          if (!trackBasesRef.current.has(cue)) {
-            trackBasesRef.current.set(cue, { start: cue.startTime, end: cue.endTime });
-          }
-          const original = trackBasesRef.current.get(cue)!;
-          const start = Math.max(0, original.start + subtitleDelay);
-          const end = Math.max(start + 0.05, original.end + subtitleDelay);
-          if (Math.abs(cue.startTime - start) > 0.001) cue.startTime = start;
-          if (Math.abs(cue.endTime - end) > 0.001) cue.endTime = end;
+      if (track.mode !== 'showing') track.mode = 'showing';
+      if (!track.cues) return;
+      for (let i = 0; i < track.cues.length; i++) {
+        const cue = track.cues[i];
+        if (!trackBasesRef.current.has(cue)) {
+          trackBasesRef.current.set(cue, { start: cue.startTime, end: cue.endTime });
         }
+        const original = trackBasesRef.current.get(cue)!;
+        const start = Math.max(0, original.start + subtitleDelay);
+        const end = Math.max(start + 0.05, original.end + subtitleDelay);
+        if (Math.abs(cue.startTime - start) > 0.001) cue.startTime = start;
+        if (Math.abs(cue.endTime - end) > 0.001) cue.endTime = end;
       }
     };
+    track.addEventListener('cuechange', adjust);
+    video.addEventListener('loadedmetadata', adjust);
     const timer = setInterval(adjust, 750);
     adjust();
-    return () => clearInterval(timer);
-  }, [activeSubtitle, selectedSubtitle?.Index, subtitleDelay, source?.Id, alignedSubtitle]);
+    return () => {
+      track.removeEventListener('cuechange', adjust);
+      video.removeEventListener('loadedmetadata', adjust);
+      clearInterval(timer);
+      track.mode = 'disabled';
+    };
+  }, [subtitleUrl, subtitleUnavailable, subtitleDelay]);
 
   useEffect(() => {
     const keydown = (e: KeyboardEvent) => {
@@ -464,6 +490,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
     setVolume(v => Math.max(0, Math.min(1, Math.round((v + delta) * 10) / 10)));
   }
   function toggleSubtitles() {
+    if (subtitleUnavailable) { setFailedSubtitles([]); return; }
     if (activeSubtitle === 'off') {
       // Prefer the last explicit track, then the 'auto' language match, then the first usable track.
       const last = lastSubtitleRef.current;
@@ -474,9 +501,9 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
     else { lastSubtitleRef.current = subtitleChoice; setSubtitleChoice('off'); }
   }
 
-  const mediaId = source?.Id;
   const fullscreenLabel = fullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)';
-  const subtitleLabel = selectedSubtitle ? `Subtitles: ${languageLabel(selectedSubtitle.Language)} (C)` : 'Subtitles off (C)';
+  const subtitleActive = !!selectedSubtitle && !subtitleUnavailable;
+  const subtitleLabel = subtitleUnavailable ? 'Subtitles failed to load' : selectedSubtitle ? `Subtitles: ${languageLabel(selectedSubtitle.Language)} (C)` : 'Subtitles off (C)';
   const max = Math.max(1, duration);
   const hidden = idle && playing && !showOptions && !status;
   const cueClass = `cue-${prefs.subtitleSize} cue-bg-${prefs.subtitleBackground}`;
@@ -485,13 +512,10 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
       onClick={e => { if (!isTv && e.target === videoRef.current) togglePlay(); }}
       onDoubleClick={e => { if (!isTv && e.target === videoRef.current) void toggleFullscreen(); }}>
       <video ref={videoRef} playsInline preload="metadata">
-        {mediaId && subtitleTracks.map(stream => (
-          <track key={`${stream.Index}-${stream.Index === selectedSubtitle?.Index && alignedSubtitle ? syncUrl : 'original'}`} kind="subtitles"
-            srcLang={stream.Language || 'und'}
-            label={`${stream.DisplayTitle || languageLabel(stream.Language)} · ${stream.Index}`}
-            src={stream.Index === selectedSubtitle?.Index && alignedSubtitle && syncUrl
-              ? syncUrl : `/jellyfin/Videos/${encodeURIComponent(item.Id)}/${encodeURIComponent(mediaId)}/Subtitles/${stream.Index}/Stream.vtt`}/>
-        ))}
+        {subtitleUrl && selectedSubtitle && !subtitleUnavailable && <track key={subtitleUrl}
+          ref={subtitleElementRef} kind="subtitles" default src={subtitleUrl}
+          srcLang={languageKey(selectedSubtitle.Language) || 'und'}
+          label={selectedSubtitle.DisplayTitle || languageLabel(selectedSubtitle.Language)} />}
       </video>
       {(status || loading) && <div className="player-message" role="status">
         {status ? <><Clapperboard aria-hidden/><span>{status}</span></> : <span className="spinner" aria-label="Preparing video"/>}
@@ -535,8 +559,8 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
           <div className="group">
             {nextEpisode && onNext && <button className="player-icon" title="Next episode (N)" aria-label="Next episode" onClick={() => onNext(nextEpisode)}>
               <SkipForward aria-hidden/>{isTv && <span>Next</span>}</button>}
-            <button className={selectedSubtitle ? 'player-icon on' : 'player-icon'} title={subtitleLabel} aria-label={subtitleLabel}
-              aria-pressed={!!selectedSubtitle} onClick={toggleSubtitles}><Captions aria-hidden/>{isTv && <span>{selectedSubtitle ? languageLabel(selectedSubtitle.Language) : 'Off'}</span>}</button>
+            <button className={subtitleActive ? 'player-icon on' : 'player-icon'} title={subtitleLabel} aria-label={subtitleLabel}
+              aria-pressed={subtitleActive} onClick={toggleSubtitles}><Captions aria-hidden/>{isTv && <span>{selectedSubtitle ? languageLabel(selectedSubtitle.Language) : 'Off'}</span>}</button>
             <button className={showOptions ? 'player-icon on' : 'player-icon'} title="Audio, subtitles & quality" aria-label="Audio, subtitles and quality"
               aria-expanded={showOptions} onClick={() => setShowOptions(s => !s)}><Settings2 aria-hidden/>{isTv && <span>Tracks</span>}</button>
             <button className="player-icon" title={fullscreenLabel} aria-label={fullscreenLabel} onClick={toggleFullscreen}>
@@ -579,6 +603,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
               {languageLabel(s.Language)} · {s.DisplayTitle || s.Codec || 'Subtitles'}
             </option>)}
           </select></label>
+        {subtitleUnavailable && <p className="muted" role="status">Could not load the subtitles. Choose another track or use the subtitle button to retry.</p>}
         <label className="field"><span><SlidersHorizontal aria-hidden/> Quality</span>
           <select value={quality} onChange={e => { savePosition(); setQuality(Number(e.target.value)); }}>
             <option value={4_000_000}>4 Mbps · Data saver</option>

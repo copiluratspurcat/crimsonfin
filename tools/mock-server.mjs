@@ -36,7 +36,7 @@ export function createMockServer({ dist = path.join(ROOT, 'dist'), art = path.jo
     mk(14, 'Vacancy', 'Movie', 'motel', { ProductionYear: 2003, RunTimeTicks: 97 * T, Genres: ['Thriller'] }),
   ];
   const series = [
-    mk(101, 'Northbound', 'Series', 'train', { ProductionYear: 2020, CommunityRating: 7.9, Genres: ['Thriller'], ChildCount: 2, UserData: { IsFavorite: true }, Overview: 'A night train leaves Bucharest for the Arctic with forty passengers and one more name on the manifest than there are seats.' }),
+    mk(101, 'Northbound', 'Series', 'train', { ProductionYear: 2020, OriginalTitle: '北行き', CommunityRating: 7.9, Genres: ['Thriller'], ChildCount: 2, UserData: { IsFavorite: true }, Overview: 'A night train leaves Bucharest for the Arctic with forty passengers and one more name on the manifest than there are seats.' }),
     mk(102, 'The Lighthouse Keeper', 'Series', 'harbour', { ProductionYear: 2019, CommunityRating: 8.1, Genres: ['Mystery'], ChildCount: 2 }),
     mk(103, 'A Quiet Census', 'Series', 'lighthouse', { ProductionYear: 2018, Genres: ['Drama'], ChildCount: 3 }),
     mk(104, 'Afterhours', 'Series', 'neon', { ProductionYear: 2023, Genres: ['Crime'], ChildCount: 1 }),
@@ -77,13 +77,20 @@ export function createMockServer({ dist = path.join(ROOT, 'dist'), art = path.jo
       { hash: 'h2', name: 'Severance.S02.1080p.WEB-DL', state: 'queuedDL', progress: 0, sizeBytes: 18.3 * GB, downloadedBytes: 0, remainingBytes: 18.3 * GB, downloadSpeedBytes: 0, uploadSpeedBytes: 0, etaSeconds: null, drive: 'WD Red', folder: '/mnt/WD/Shows', seeding: false }] };
   const details = item => ({ ...item, MediaSources: [{ Id: id(999), MediaStreams: [
     { Type: 'Video', DisplayTitle: '4K HDR · HEVC' }, { Type: 'Audio', DisplayTitle: 'English 5.1' }, { Type: 'Audio', DisplayTitle: 'Romanian 2.0' },
-    { Type: 'Subtitle', DisplayTitle: 'Romanian', Index: 3, Language: 'rum', Codec: 'srt' }, { Type: 'Subtitle', DisplayTitle: 'English', Index: 4, Language: 'eng', Codec: 'srt' }] }] });
+    { Type: 'Subtitle', DisplayTitle: 'Romanian', Index: 3, Language: 'rum', Codec: 'srt' }, { Type: 'Subtitle', DisplayTitle: 'English', Index: 4, Language: 'eng', Codec: 'srt' },
+    { Type: 'Subtitle', DisplayTitle: 'English backup', Index: 5, Language: 'en-US', Codec: 'srt' }] }] });
 
   const json = (res, code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
   const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.woff2': 'font/woff2', '.svg': 'image/svg+xml' };
   if (!existsSync(path.join(DIST, 'index.html'))) throw new Error('No built app in ' + DIST + ': run npm run build first');
   return http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x'); const p = url.pathname;
+    const subtitle = p.match(/^\/jellyfin\/Videos\/\w+\/\w+\/Subtitles\/(\d+)\/Stream\.vtt$/);
+    if (subtitle) {
+      if (subtitle[1] === '4') { res.writeHead(502); return res.end(); }
+      res.writeHead(200, { 'content-type': 'text/vtt; charset=utf-8' });
+      return res.end('\uFEFFWEBVTT\n\n00:00:00.000 --> 00:00:10.000\nTest subtitle\n');
+    }
     const img = p.match(/^\/jellyfin\/Items\/(\w+)\/Images\/(\w+)/);
     if (img) {
       const item = all.find(i => i.Id === img[1]);
