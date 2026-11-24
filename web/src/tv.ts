@@ -10,7 +10,8 @@ function focusable(element: HTMLElement) {
     && getComputedStyle(element).visibility === 'visible';
 }
 function region() {
-  return document.querySelector<HTMLElement>('dialog[open]') || document.querySelector<HTMLElement>('.player');
+  return document.querySelector<HTMLElement>('dialog[open]') || document.querySelector<HTMLElement>('.card-menu-panel')
+    || document.querySelector<HTMLElement>('.player');
 }
 function controls() {
   return [...(region() || document).querySelectorAll<HTMLElement>(selector)].filter(focusable);

@@ -193,6 +193,15 @@ export function createAppServer(options = {}) {
       return raw ? JSON.parse(raw) : { ok: true };
     } finally { clearTimeout(timeout); }
   }
+  /** Try each Jellyfin path in turn, moving on only when the upstream call failed (not on auth errors). */
+  async function jellyfinEither(paths, session, init) {
+    let lastError;
+    for (const relative of paths) {
+      try { return await jellyfin(relative, session, init); }
+      catch (error) { if (error?.status !== 502) throw error; lastError = error; }
+    }
+    throw lastError;
+  }
   async function requireSession(req) {
     const raw = decodeURIComponent(parseCookie(req.headers.cookie, 'cf_session'));
     if (!raw || raw.length > 128) failure('Please sign in', 401);
@@ -365,6 +374,25 @@ export function createAppServer(options = {}) {
         if (favorite && ['POST', 'DELETE'].includes(req.method)) {
           verifyMutation(req);
           await jellyfin(`/Users/${user.userId}/FavoriteItems/${safeId(favorite[1])}`, user, { method: req.method });
+          return json(res, 200, { ok: true });
+        }
+        // Watch history. Jellyfin 10.9 moved these user-data endpoints; try the
+        // classic route first and fall back to the newer one if it fails.
+        const played = pathname.match(/^\/api\/items\/([\w-]+)\/played$/);
+        if (played && ['POST', 'DELETE'].includes(req.method)) {
+          verifyMutation(req);
+          const id = safeId(played[1]);
+          await jellyfinEither([`/Users/${user.userId}/PlayedItems/${id}`, `/UserPlayedItems/${id}?userId=${encodeURIComponent(user.userId)}`],
+            user, { method: req.method });
+          return json(res, 200, { ok: true });
+        }
+        const progress = pathname.match(/^\/api\/items\/([\w-]+)\/progress$/);
+        if (progress && req.method === 'DELETE') {
+          verifyMutation(req);
+          const id = safeId(progress[1]);
+          // A zero resume position removes the item from Continue watching without marking it watched.
+          await jellyfinEither([`/Users/${user.userId}/Items/${id}/UserData`, `/UserItems/${id}/UserData?userId=${encodeURIComponent(user.userId)}`],
+            user, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ PlaybackPositionTicks: 0 }) });
           return json(res, 200, { ok: true });
         }
         if (pathname === '/api/playback' && req.method === 'POST') {

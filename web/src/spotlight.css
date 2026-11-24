@@ -248,6 +248,31 @@ main#content { min-height: 100vh; }
 .crimsonfin-tv .card-hit:focus .card-text strong { font-weight: 700; }
 .crimsonfin-tv .card-play { display: none; }
 
+/* Card "⋯" menu: top-right of the artwork, on hover/focus (PC) or remote focus (TV). */
+.card-menu { position: absolute; z-index: 3; top: 8px; right: 8px; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%;
+  background: rgb(0 0 0 / .72); color: #fff; opacity: 0; transition: opacity .15s; }
+.card-menu svg { width: 18px; height: 18px; }
+.card:hover .card-menu, .card:focus-within .card-menu, .card-menu.open { opacity: 1; }
+.card-menu:hover, .card-menu.open { background: var(--focus); color: var(--bg); }
+.card:hover .card-watched, .card:hover .card-fav, .card:focus-within .card-watched, .card:focus-within .card-fav { opacity: 0; }
+.card-menu-panel { position: fixed; z-index: 60; width: 300px; right: auto; }
+.card-menu-panel .menu-error { padding: 6px 12px; font-size: var(--fs-xs); color: var(--red); }
+.episode-list li { display: flex; align-items: center; gap: 4px; }
+.episode-list .episode { flex: 1; min-width: 0; }
+.episode-menu { display: grid; place-items: center; flex-shrink: 0; width: 40px; height: 40px; border-radius: 50%; color: var(--text-2); opacity: 0; transition: opacity .15s; }
+.episode-list li:hover .episode-menu, .episode-menu:focus-visible, .episode-menu.open { opacity: 1; }
+.episode-menu:hover, .episode-menu.open { background: var(--s2); color: var(--text); }
+.crimsonfin-tv .card-menu { top: calc(12 * var(--u)); right: calc(12 * var(--u)); width: calc(48 * var(--u)); height: calc(48 * var(--u)); }
+.crimsonfin-tv .card-menu svg, .crimsonfin-tv .episode-menu svg { width: calc(26 * var(--u)); height: calc(26 * var(--u)); }
+.crimsonfin-tv .card-menu:focus { opacity: 1; background: var(--focus); color: var(--bg); }
+.crimsonfin-tv .episode-menu { opacity: 1; width: calc(64 * var(--u)); height: calc(64 * var(--u)); }
+.crimsonfin-tv .episode-menu:focus { background: var(--focus); color: var(--bg); }
+.crimsonfin-tv .card-menu-panel { width: calc(460 * var(--u)); }
+.crimsonfin-tv .card-menu-panel button { padding: calc(16 * var(--u)) calc(18 * var(--u)); font-size: var(--fs-m); gap: calc(16 * var(--u)); }
+.crimsonfin-tv .card-menu-panel button svg { width: calc(26 * var(--u)); height: calc(26 * var(--u)); }
+.crimsonfin-tv .card-menu-panel button:focus { background: var(--focus); color: var(--bg); outline: none; }
+.crimsonfin-tv .card-menu-panel button:focus svg { color: var(--bg); }
+
 .row { margin-top: 34px; }
 .row-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
 .row-head h2 { font-size: var(--fs-l); font-weight: 700; letter-spacing: -.01em; }

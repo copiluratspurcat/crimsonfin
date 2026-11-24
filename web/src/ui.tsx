@@ -1,6 +1,7 @@
-import React, { useRef, useState } from 'react';
-import { Check, ChevronLeft, ChevronRight, Clapperboard, Heart, Play } from 'lucide-react';
-import { art, episodeCode, isPlayable, minutesLeft, progressOf, wideArt, type Item } from './lib';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
+import { Check, ChevronLeft, ChevronRight, Clapperboard, Eye, EyeOff, Heart, HeartOff, History, MoreHorizontal, Play, Tv2 } from 'lucide-react';
+import { api, art, episodeCode, isPlayable, minutesLeft, progressOf, queryClient, wideArt, type Item } from './lib';
 
 export function Logo({ compact }: { compact?: boolean }) {
   return <span className="logo">
@@ -40,6 +41,7 @@ export function PosterCard({ item, onOpen, onPlay, subtitle, badge }: CardProps)
       <span className="card-text"><strong>{item.Name}</strong>{meta && <small>{meta}</small>}</span>
     </button>
     <QuickPlay item={item} onOpen={onOpen} onPlay={onPlay} />
+    <CardMenu item={item} onOpen={onOpen} />
   </div>;
 }
 
@@ -57,7 +59,80 @@ export function WideCard({ item, onOpen, onPlay, subtitle, badge }: CardProps) {
       <span className="card-text"><strong>{title}</strong>{sub && <small className={badge ? 'accent' : ''}>{sub}</small>}</span>
     </button>
     <QuickPlay item={item} onOpen={onOpen} onPlay={onPlay} />
+    <CardMenu item={item} onOpen={onOpen} />
   </div>;
+}
+
+/**
+ * "⋯" menu on a card's artwork: watch-history and list actions. Shown on hover/focus
+ * (PC) or when the card has remote focus (TV). The panel is position:fixed so the
+ * horizontally scrolling rows can't clip it.
+ */
+export function CardMenu({ item, onOpen, className = 'card-menu' }: { item: Item; onOpen: (item: Item) => void; className?: string }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const focusedOnOpen = useRef(false);
+  const inProgress = progressOf(item) > 0 && !item.UserData?.Played;
+  const played = !!item.UserData?.Played;
+  const favorite = !!item.UserData?.IsFavorite;
+  const action = useMutation({
+    mutationFn: (kind: 'progress' | 'watched' | 'unwatched' | 'favorite' | 'unfavorite') => {
+      const id = encodeURIComponent(item.Id);
+      if (kind === 'progress') return api(`/api/items/${id}/progress`, { method: 'DELETE' });
+      if (kind === 'watched' || kind === 'unwatched') return api(`/api/items/${id}/played`, { method: kind === 'watched' ? 'POST' : 'DELETE' });
+      return api(`/api/items/${id}/favorite`, { method: kind === 'favorite' ? 'POST' : 'DELETE' });
+    },
+    onSuccess: () => {
+      setOpen(false);
+      for (const key of ['resume', 'nextup', 'movies', 'series', 'item', 'episodes', 'search']) void queryClient.invalidateQueries({ queryKey: [key] });
+    }
+  });
+  useLayoutEffect(() => {
+    if (!open || !button.current) return;
+    const place = () => {
+      const r = button.current!.getBoundingClientRect();
+      const w = panel.current?.offsetWidth || 240, h = panel.current?.offsetHeight || 180;
+      const top = r.bottom + 6 + h > window.innerHeight ? Math.max(8, r.top - 6 - h) : r.bottom + 6;
+      setPos({ top, left: Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w)) });
+    };
+    place();
+    window.addEventListener('scroll', place, true); window.addEventListener('resize', place);
+    return () => { window.removeEventListener('scroll', place, true); window.removeEventListener('resize', place); };
+  }, [open]);
+  // Move focus into the menu once it is placed (it is measured off-screen first), once per opening,
+  // so remote/keyboard users can act on it directly and scrolling does not steal focus back.
+  useEffect(() => {
+    if (!open) { focusedOnOpen.current = false; return; }
+    if (!pos || focusedOnOpen.current) return;
+    focusedOnOpen.current = true;
+    panel.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true });
+  }, [open, pos]);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => { if (!panel.current?.contains(e.target as Node) && !button.current?.contains(e.target as Node)) setOpen(false); };
+    // Capture Escape (TV Back) before the page uses it to leave the details view.
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); button.current?.focus(); } };
+    document.addEventListener('pointerdown', close); window.addEventListener('keydown', esc, true);
+    return () => { document.removeEventListener('pointerdown', close); window.removeEventListener('keydown', esc, true); };
+  }, [open]);
+  const run = (kind: Parameters<typeof action.mutate>[0]) => action.mutate(kind);
+  return <>
+    <button ref={button} className={open ? `${className} open` : className} aria-label={`More options for ${item.Name}`} title="More options"
+      aria-haspopup="menu" aria-expanded={open} onClick={e => { e.stopPropagation(); if (!open) setPos(null); setOpen(o => !o); }}><MoreHorizontal aria-hidden /></button>
+    {open && <div ref={panel} className="menu card-menu-panel" role="menu" aria-label={`Options for ${item.Name}`}
+      style={pos ? { top: pos.top, left: pos.left } : { top: -9999, left: -9999 }} onClick={e => e.stopPropagation()}>
+      {inProgress && <button role="menuitem" disabled={action.isPending} onClick={() => run('progress')}><History aria-hidden /> Remove from Continue watching</button>}
+      {played ? <button role="menuitem" disabled={action.isPending} onClick={() => run('unwatched')}><EyeOff aria-hidden /> Mark as unwatched</button>
+        : <button role="menuitem" disabled={action.isPending} onClick={() => run('watched')}><Eye aria-hidden /> Mark as watched</button>}
+      {item.Type !== 'Episode' && (favorite ? <button role="menuitem" disabled={action.isPending} onClick={() => run('unfavorite')}><HeartOff aria-hidden /> Remove from My list</button>
+        : <button role="menuitem" disabled={action.isPending} onClick={() => run('favorite')}><Heart aria-hidden /> Add to My list</button>)}
+      {item.Type === 'Episode' && item.SeriesId && <button role="menuitem" onClick={() => { setOpen(false); onOpen(item); }}><Tv2 aria-hidden /> Go to series</button>}
+      {action.isPending && <p className="menu-label" role="status">Saving…</p>}
+      {action.error && <p className="menu-error" role="alert">{action.error.message}</p>}
+    </div>}
+  </>;
 }
 
 /** Mouse-only shortcut: the hover play button (hidden on TV, where OK opens/plays). */

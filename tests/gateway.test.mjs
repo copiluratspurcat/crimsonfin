@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import { createAppServer, rewriteM3u8 } from '../server/index.mjs';
 
 const VIDEO = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+const userData = [];
 function upstream(isRevoked = () => false) {
   return http.createServer(async (req, res) => {
     const p = new URL(req.url, 'http://localhost');
@@ -30,6 +31,13 @@ function upstream(isRevoked = () => false) {
     }
     if (p.pathname === '/System/Info/Public') { res.setHeader('content-type', 'application/json'); res.end('{"ServerName":"Fake"}'); return; }
     if (p.pathname.startsWith('/Sessions/Playing') || p.pathname.includes('FavoriteItems')) { res.writeHead(204); res.end(); return; }
+    // Simulate Jellyfin 10.9+: the classic PlayedItems route is gone, the new one works.
+    if (p.pathname.startsWith('/Users/') && p.pathname.includes('/PlayedItems/')) { res.writeHead(404); res.end(); return; }
+    if (p.pathname.startsWith('/UserPlayedItems/')) { userData.push(`${req.method} played ${p.searchParams.get('userId')}`); res.writeHead(204); res.end(); return; }
+    if (p.pathname.endsWith('/UserData') && req.method === 'POST') {
+      let body = ''; for await (const chunk of req) body += chunk;
+      userData.push(`progress ${body}`); res.writeHead(204); res.end(); return;
+    }
     res.setHeader('content-type', 'application/json');
     if (p.pathname.endsWith('/Items') || p.pathname.includes('/Items/')) { res.end(JSON.stringify({ Items: [{ Id: VIDEO, Name: 'Test Movie', Type: 'Movie' }], TotalRecordCount: 1 })); return; }
     res.end('{"Items":[],"TotalRecordCount":0}');
@@ -65,6 +73,11 @@ test('login uses per-user token, encrypted storage, cookies, and authorization b
   assert.equal((await request('/api/admin/status', cookie)).status, 403);
   assert.equal((await request('/api/playback', cookie, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event: 'Playing', itemId: VIDEO, positionTicks: 0 }) })).status, 200);
   assert.equal((await request(`/api/items/${VIDEO}/favorite`, cookie, { method: 'POST' })).status, 200);
+  // Watch history: mark watched/unwatched (falls back to the 10.9+ route) and clear the resume position.
+  assert.equal((await request(`/api/items/${VIDEO}/played`, cookie, { method: 'POST' })).status, 200);
+  assert.equal((await request(`/api/items/${VIDEO}/played`, cookie, { method: 'DELETE' })).status, 200);
+  assert.equal((await request(`/api/items/${VIDEO}/progress`, cookie, { method: 'DELETE' })).status, 200);
+  assert.deepEqual(userData, [`POST played ${VIDEO}`, `DELETE played ${VIDEO}`, 'progress {"PlaybackPositionTicks":0}']);
 });
 
 test('proxy supports video range requests without leaking Jellyfin token', async t => {

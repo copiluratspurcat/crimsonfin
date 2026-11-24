@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Check, ChevronDown, Delete, Heart, Info, Play, Plus, Search, Star } from 'lucide-react';
 import { api, art, episodeCode, isPlayable, minutesLeft, progressOf, runtime, useArtworkAccent, useDebounced, type Item, type PageResult } from './lib';
-import { Artwork, Empty, PageHead, PosterCard, Row, Tabs, WideCard } from './ui';
+import { Artwork, CardMenu, Empty, PageHead, PosterCard, Row, Tabs, WideCard } from './ui';
 import { isTv } from './tv';
 
 type Nav = { onOpen: (item: Item) => void; onPlay: (item: Item) => void };
@@ -211,7 +211,7 @@ export function DetailsPage({ item, nextUp, onBack, onPlay, onChanged }: {
             <span className="ep-text"><strong>{ep.Name}{ep.UserData?.Played && <Check className="ok" aria-label="Watched" />}</strong>
               {ep.Overview && <small>{ep.Overview}</small>}</span>
             <span className={now ? 'ep-time accent' : 'ep-time'}>{now && minutesLeft(ep) ? minutesLeft(ep) : runtime(ep.RunTimeTicks)}</span>
-          </button></li>;
+          </button><CardMenu item={ep} onOpen={() => {}} className="episode-menu" /></li>;
         })}</ol> : <Empty>No episodes in this season.</Empty>}
     </section>}
   </div>;
