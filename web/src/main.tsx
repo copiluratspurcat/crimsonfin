@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, queryClient, statusOf, type Account, type Item, type PageResult } from './lib';
@@ -13,6 +13,9 @@ import { Logo } from './ui';
 import { initTheme } from './theme';
 import { enableTvNavigation } from './tv';
 import './spotlight.css';
+
+/** Browse pages kept alive between visits (their cards and artwork stay in place). */
+const KEEP_ALIVE: Tab[] = ['home', 'movies', 'series', 'mylist'];
 
 function App() {
   const qc = useQueryClient();
@@ -33,14 +36,25 @@ function App() {
   // A 401 from any library call means the Jellyfin session ended: re-check /me to show the login.
   const sessionExpired = [movies.error, series.error, resume.error, nextup.error].some(error => statusOf(error) === 401);
   useEffect(() => { if (sessionExpired) void qc.invalidateQueries({ queryKey: ['me'] }); }, [qc, sessionExpired]);
-  useEffect(() => { window.scrollTo({ top: 0 }); }, [tab, selected?.Id]);
+  // Browse pages stay mounted once visited (hidden when not shown), so switching tabs or
+  // leaving a details page doesn't rebuild every card and re-request its artwork.
+  const [kept, setKept] = useState<Tab[]>(['home']);
+  useEffect(() => { if (KEEP_ALIVE.includes(tab)) setKept(k => (k.includes(tab) ? k : [...k, tab])); }, [tab]);
+  const savedScroll = useRef(0);
+  const restoreScroll = useRef(false);
+  useEffect(() => { window.scrollTo({ top: 0 }); }, [tab]);
+  useLayoutEffect(() => {
+    if (selected) window.scrollTo({ top: 0 });
+    else if (restoreScroll.current) { restoreScroll.current = false; window.scrollTo({ top: savedScroll.current }); }
+  }, [selected?.Id]);
+  const closeDetails = () => { restoreScroll.current = true; setSelected(null); };
   // Escape / TV Back closes the details page (the player handles its own Escape).
   useEffect(() => {
     if (!selected || playing) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
       if (e.target instanceof HTMLElement && e.target.closest('.searchbox, .account, select')) return;
-      e.preventDefault(); setSelected(null);
+      e.preventDefault(); closeDetails();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -63,6 +77,7 @@ function App() {
   const libraryError = (movies.error || series.error)?.message;
   const retryLibrary = () => { void movies.refetch(); void series.refetch(); };
   const open = (item: Item) => {
+    if (!selected) savedScroll.current = window.scrollY;
     // Episodes and seasons open their series; everything else opens itself.
     if ((item.Type === 'Episode' || item.Type === 'Season') && item.SeriesId) setSelected({ Id: item.SeriesId, Name: item.SeriesName || item.Name, Type: 'Series' });
     else setSelected(item);
@@ -70,21 +85,25 @@ function App() {
   const play = (item: Item) => setPlaying(item);
   const goTab = (next: Tab) => { setSelected(null); setTab(next); };
   const nav = { onOpen: open, onPlay: play };
+  /** Render a browse page if it is showing or was visited before; hide it otherwise. */
+  const keep = (t: Tab, page: React.ReactNode) => (t === tab || kept.includes(t))
+    && <div className="view" hidden={!!selected || t !== tab}>{page}</div>;
 
   return <div className="app">
     <TopNav tab={tab} user={user} onTab={goTab} onOpen={open} onSignOut={() => logout.mutate()}
       onSearchAll={term => { setSearchTerm(term); goTab('search'); }} />
     <main id="content">
-      {selected ? <DetailsPage key={selected.Id} item={selected} nextUp={nextup.data?.Items || []} onBack={() => setSelected(null)}
-        onPlay={play} onChanged={() => void qc.invalidateQueries()} /> : <>
-        {tab === 'home' && <HomePage hero={hero} recent={recent} upNext={upcoming.slice(recent.length)} movies={movies.data?.Items || []}
-          series={series.data?.Items || []} loading={movies.isPending || series.isPending} error={libraryError} onRetry={retryLibrary} {...nav} />}
-        {tab === 'movies' && <LibraryPage kind="movies" items={movies.data?.Items || []} nextUp={[]} loading={movies.isPending}
-          error={movies.error?.message} onRetry={retryLibrary} {...nav} />}
-        {tab === 'series' && <LibraryPage kind="series" items={series.data?.Items || []} nextUp={upcoming.filter(i => i.Type === 'Episode')}
-          loading={series.isPending} error={series.error?.message} onRetry={retryLibrary} {...nav} />}
-        {tab === 'mylist' && <MyListPage favorites={all.filter(i => i.UserData?.IsFavorite)} watching={upcoming}
-          watched={all.filter(i => i.UserData?.Played)} loading={movies.isPending || series.isPending || resume.isPending || nextup.isPending} {...nav} />}
+      {selected && <DetailsPage key={selected.Id} item={selected} nextUp={nextup.data?.Items || []} onBack={closeDetails}
+        onPlay={play} onChanged={() => void qc.invalidateQueries()} />}
+      {keep('home', <HomePage hero={hero} recent={recent} upNext={upcoming.slice(recent.length)} movies={movies.data?.Items || []}
+        series={series.data?.Items || []} loading={movies.isPending || series.isPending} error={libraryError} onRetry={retryLibrary} {...nav} />)}
+      {keep('movies', <LibraryPage kind="movies" items={movies.data?.Items || []} nextUp={[]} loading={movies.isPending}
+        error={movies.error?.message} onRetry={retryLibrary} {...nav} />)}
+      {keep('series', <LibraryPage kind="series" items={series.data?.Items || []} nextUp={upcoming.filter(i => i.Type === 'Episode')}
+        loading={series.isPending} error={series.error?.message} onRetry={retryLibrary} {...nav} />)}
+      {keep('mylist', <MyListPage favorites={all.filter(i => i.UserData?.IsFavorite)} watching={upcoming}
+        watched={all.filter(i => i.UserData?.Played)} loading={movies.isPending || series.isPending || resume.isPending || nextup.isPending} {...nav} />)}
+      {!selected && <>
         {tab === 'search' && <SearchPage initial={searchTerm} {...nav} />}
         {tab === 'requests' && <RequestsPage user={user} onShowDownloads={() => goTab(user.isAdmin ? 'downloads' : 'requests')} />}
         {(tab === 'settings' || tab === 'downloads' || tab === 'admin') && <SettingsPage user={user} tab={tab} onTab={goTab} onSignOut={() => logout.mutate()} />}

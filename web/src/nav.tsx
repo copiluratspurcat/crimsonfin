@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, CornerDownLeft, DownloadCloud, LogOut, Search, Settings2, ShieldCheck } from 'lucide-react';
-import { api, art, useDebounced, type Account, type Item, type PageResult } from './lib';
+import { api, itemArt, useDebounced, type Account, type Item, type PageResult } from './lib';
 import { Artwork, Logo } from './ui';
 import { isTv } from './tv';
 
@@ -86,7 +86,7 @@ function SearchBox({ onOpen, onSearchAll }: Pick<NavProps, 'onOpen' | 'onSearchA
       <p className="menu-label">{search.isFetching && !search.data ? 'Searching…' : results.length ? 'Top results' : 'No matches'}</p>
       {results.map((item, i) => <button key={item.Id} role="option" aria-selected={i === index} className={i === index ? 'result active' : 'result'}
         onMouseEnter={() => setIndex(i)} onClick={() => choose(item)}>
-        <span className="result-art"><Artwork sources={[art(item.Id, 'Primary', 120)]} /></span>
+        <span className="result-art"><Artwork sources={[itemArt(item, 'Primary', 120)]} /></span>
         <span className="result-text"><Highlight text={item.Name} term={term} />
           <small>{item.Type === 'Series' ? 'Show' : 'Movie'}{item.ProductionYear ? ` · ${item.ProductionYear}` : ''}</small></span>
         {i === index && <CornerDownLeft className="enter-hint" aria-hidden />}

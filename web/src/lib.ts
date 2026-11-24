@@ -9,6 +9,7 @@ export type Item = {
   UserData?: { IsFavorite?: boolean; PlaybackPositionTicks?: number; PlayedPercentage?: number; Played?: boolean };
   IndexNumber?: number; IndexNumberEnd?: number; ParentIndexNumber?: number;
   SeriesId?: string; SeriesName?: string; ChildCount?: number;
+  SeriesPrimaryImageTag?: string; ParentBackdropItemId?: string; ParentBackdropImageTags?: string[];
   MediaSources?: { Container?: string; MediaStreams?: { Codec?: string; Type?: string; DisplayTitle?: string; Language?: string }[] }[];
 };
 export type PageResult = { Items: Item[]; TotalRecordCount: number };
@@ -44,16 +45,22 @@ export const statusOf = (error: unknown) =>
 export const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 40_000, refetchOnWindowFocus: false } } });
 
 export type ArtKind = 'Primary' | 'Backdrop' | 'Thumb';
-export const art = (id: string, kind: ArtKind = 'Primary', width?: number) =>
-  `/jellyfin/Items/${encodeURIComponent(id)}/Images/${kind}?maxWidth=${width ?? (kind === 'Backdrop' ? 1600 : 540)}&quality=84`;
+/** Artwork URL. Pass Jellyfin's image tag when known: it pins the version, so the browser can cache it long-term. */
+export const art = (id: string, kind: ArtKind = 'Primary', width?: number, tag?: string) =>
+  `/jellyfin/Items/${encodeURIComponent(id)}/Images/${kind}?maxWidth=${width ?? (kind === 'Backdrop' ? 1600 : 540)}&quality=84${tag ? `&tag=${encodeURIComponent(tag)}` : ''}`;
+export const itemArt = (item: Item, kind: ArtKind = 'Primary', width?: number) =>
+  art(item.Id, kind, width, kind === 'Backdrop' ? item.BackdropImageTags?.[0] : item.ImageTags?.[kind]);
 
 /** Landscape artwork for an item: episode stills, else the backdrop (falls back to the series). */
 export function wideArt(item: Item): string[] {
   if (item.Type === 'Episode') {
-    return [item.ImageTags?.Primary ? art(item.Id, 'Primary', 720) : '', item.SeriesId ? art(item.SeriesId, 'Backdrop', 720) : '']
+    const seriesBackdrop = item.ParentBackdropItemId && item.ParentBackdropImageTags?.[0]
+      ? art(item.ParentBackdropItemId, 'Backdrop', 720, item.ParentBackdropImageTags[0])
+      : item.SeriesId ? art(item.SeriesId, 'Backdrop', 720) : '';
+    return [item.ImageTags?.Primary ? itemArt(item, 'Primary', 720) : '', seriesBackdrop]
       .filter(Boolean);
   }
-  return [art(item.Id, 'Backdrop', 720), art(item.Id, 'Thumb', 720)];
+  return [itemArt(item, 'Backdrop', 720), itemArt(item, 'Thumb', 720)];
 }
 
 export function runtime(ticks?: number) {

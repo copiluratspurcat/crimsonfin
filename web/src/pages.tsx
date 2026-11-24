@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Check, ChevronDown, Delete, Heart, Info, Play, Plus, Search, Star } from 'lucide-react';
-import { api, art, episodeCode, isPlayable, minutesLeft, progressOf, runtime, useArtworkAccent, useDebounced, type Item, type PageResult } from './lib';
+import { api, itemArt, episodeCode, isPlayable, minutesLeft, progressOf, runtime, useArtworkAccent, useDebounced, type Item, type PageResult } from './lib';
 import { Artwork, CardMenu, Empty, PageHead, PosterCard, Row, Tabs, WideCard } from './ui';
 import { isTv } from './tv';
 
@@ -19,7 +19,7 @@ export function HomePage({ hero, recent, upNext, movies, series, loading, error,
 }) {
   return <div className="page home">
     {hero ? <section className="spotlight">
-      <div className="spotlight-art" aria-hidden><Artwork sources={[art(hero.Id, 'Backdrop')]} /></div>
+      <div className="spotlight-art" aria-hidden><Artwork sources={[itemArt(hero, 'Backdrop')]} /></div>
       <div className="spotlight-info">
         <span className="chip">Featured from your library</span>
         <h1>{hero.Name}</h1>
@@ -166,7 +166,7 @@ export function DetailsPage({ item, nextUp, onBack, onPlay, onChanged }: {
     queryFn: () => api<PageResult>(`/api/series/${item.Id}/episodes?seasonId=${encodeURIComponent(seasonId)}`) });
   const favorite = useMutation({ mutationFn: () => api(`/api/items/${item.Id}/favorite`, { method: media.UserData?.IsFavorite ? 'DELETE' : 'POST' }),
     onSuccess: () => { void details.refetch(); onChanged(); } });
-  const accent = useArtworkAccent(art(item.Id, 'Backdrop', 160));
+  const accent = useArtworkAccent(itemArt(item, 'Backdrop', 160));
   const resumeEpisode = series ? nextUp.find(e => e.SeriesId === item.Id) || episodes.data?.Items.find(e => !e.UserData?.Played) : undefined;
   const streams = media.MediaSources?.[0]?.MediaStreams || [];
   const facts = [
@@ -176,7 +176,7 @@ export function DetailsPage({ item, nextUp, onBack, onPlay, onChanged }: {
   ].filter(([, v]) => v);
   const style = accent ? { '--item-accent': accent.color, '--item-accent-text': accent.text } as React.CSSProperties : undefined;
   return <div className="page details" style={style}>
-    <div className="details-art" aria-hidden><Artwork sources={[art(item.Id, 'Backdrop')]} /></div>
+    <div className="details-art" aria-hidden><Artwork sources={[itemArt(item, 'Backdrop')]} /></div>
     <div className="details-info">
       <button className="back-link" data-back onClick={onBack}><ArrowLeft aria-hidden /> Back</button>
       <span className="chip accent">{series ? `Series${seasons.data?.Items.length ? ` · ${seasons.data.Items.length} season${seasons.data.Items.length === 1 ? '' : 's'}` : ''}` : 'Movie'}</span>
@@ -206,7 +206,7 @@ export function DetailsPage({ item, nextUp, onBack, onPlay, onChanged }: {
           const now = ep.Id === resumeEpisode?.Id;
           return <li key={ep.Id}><button className={now ? 'episode current' : 'episode'} onClick={() => onPlay(ep)}>
             <span className="ep-num">{ep.IndexNumber ?? '–'}</span>
-            <span className="ep-art"><Artwork sources={[art(ep.Id, 'Primary', 400), art(item.Id, 'Backdrop', 400)]} />
+            <span className="ep-art"><Artwork sources={[itemArt(ep, 'Primary', 400), itemArt(item, 'Backdrop', 400)]} />
               {progressOf(ep) > 0 && <span className="card-progress"><i style={{ width: `${progressOf(ep)}%` }} /></span>}</span>
             <span className="ep-text"><strong>{ep.Name}{ep.UserData?.Played && <Check className="ok" aria-label="Watched" />}</strong>
               {ep.Overview && <small>{ep.Overview}</small>}</span>

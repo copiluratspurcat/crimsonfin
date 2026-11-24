@@ -241,7 +241,12 @@ export function createAppServer(options = {}) {
       if (value) passHeaders[name] = value;
     }
     passHeaders['x-content-type-options'] = 'nosniff';
-    passHeaders['cache-control'] = 'private, no-store';
+    // Artwork may be cached by the viewer's browser (never shared caches). A `tag` query
+    // pins the exact image version, so a new tag means new artwork: safe to keep for a week.
+    // Streams, playlists and subtitles stay uncached.
+    const isImage = /^\/Items\/[\w-]+\/Images\//.test(pathname) && upstream.ok;
+    passHeaders['cache-control'] = !isImage ? 'private, no-store'
+      : uri.searchParams.has('tag') ? 'private, max-age=604800, immutable' : 'private, max-age=3600';
     if (/\.m3u8(?:\?|$)/i.test(uri.pathname) && upstream.ok && req.method === 'GET') {
       const raw = await upstream.text();
       if (raw.length > 2 * 1024 * 1024) failure('Playlist too large', 502);

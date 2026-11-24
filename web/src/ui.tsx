@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Check, ChevronLeft, ChevronRight, Clapperboard, Eye, EyeOff, Heart, HeartOff, History, MoreHorizontal, Play, Tv2 } from 'lucide-react';
-import { api, art, episodeCode, isPlayable, minutesLeft, progressOf, queryClient, wideArt, type Item } from './lib';
+import { api, art, itemArt, episodeCode, isPlayable, minutesLeft, progressOf, queryClient, wideArt, type Item } from './lib';
 
 export function Logo({ compact }: { compact?: boolean }) {
   return <span className="logo">
@@ -32,7 +32,7 @@ export function PosterCard({ item, onOpen, onPlay, subtitle, badge }: CardProps)
   return <div className="card poster-card">
     <button className="card-hit" onClick={() => onOpen(item)} aria-label={`${item.Name}${meta ? ', ' + meta : ''}`}>
       <span className="card-art">
-        <Artwork sources={[art(item.Id, 'Primary', 400)]} label="No artwork" />
+        <Artwork sources={[itemArt(item, 'Primary', 400)]} label="No artwork" />
         {badge && <span className="card-badge">{badge}</span>}
         {item.UserData?.Played && <span className="card-watched" title="Watched"><Check aria-hidden /></span>}
         {item.UserData?.IsFavorite && !item.UserData?.Played && <span className="card-fav" title="In My list"><Heart aria-hidden /></span>}
@@ -52,7 +52,7 @@ export function WideCard({ item, onOpen, onPlay, subtitle, badge }: CardProps) {
   return <div className="card wide-card">
     <button className="card-hit" onClick={() => (isPlayable(item) ? onPlay(item) : onOpen(item))} aria-label={`${title}, ${sub}`}>
       <span className="card-art">
-        <Artwork sources={[...wideArt(item), art(item.SeriesId || item.Id, 'Primary', 400)]} label={title} />
+        <Artwork sources={[...wideArt(item), item.SeriesId ? art(item.SeriesId, 'Primary', 400, item.SeriesPrimaryImageTag) : itemArt(item, 'Primary', 400)]} label={title} />
         {badge && <span className="card-badge">{badge}</span>}
         <ProgressBar value={progressOf(item)} />
       </span>

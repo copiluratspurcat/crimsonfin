@@ -85,6 +85,12 @@ test('proxy supports video range requests without leaking Jellyfin token', async
   const cookie = await login();
   const partial = await request(`/jellyfin/Videos/${VIDEO}/stream`, cookie, { headers: { range: 'bytes=0-3' } });
   assert.equal(partial.status, 206);
+  assert.equal(partial.headers.get('cache-control'), 'private, no-store');
+  // Artwork may be cached by the browser: a week when the version tag is pinned, an hour otherwise.
+  const tagged = await request(`/jellyfin/Items/${VIDEO}/Images/Primary?maxWidth=400&tag=abc123`, cookie);
+  assert.equal(tagged.headers.get('cache-control'), 'private, max-age=604800, immutable');
+  const untagged = await request(`/jellyfin/Items/${VIDEO}/Images/Backdrop?maxWidth=1600`, cookie);
+  assert.equal(untagged.headers.get('cache-control'), 'private, max-age=3600');
   assert.equal(partial.headers.get('content-range'), 'bytes 0-3/12');
   assert.equal(await partial.text(), 'abcd');
   const playlist = await request(`/jellyfin/Videos/${VIDEO}/master.m3u8`, cookie);
