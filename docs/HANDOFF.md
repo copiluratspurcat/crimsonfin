@@ -2,16 +2,12 @@
 
 _Last updated: 2026-11-24. Update this file at the end of every work session (see `AGENTS.md`)._
 
-## Open pull requests (merge in this order)
+## Release 2.5.7
 
-| PR | Branch | What | Base |
-|---|---|---|---|
-| #4 | `spotlight-redesign` | The "Spotlight" redesign for PC and TV, plus everything built on it: Dobby branding, paged libraries with sort/genre/filter, card menus (remove from Continue watching, mark watched, My list), longer artwork caching, player features (Skip intro, Up next with autoplay, subtitle size/background settings), lazy-loaded pages, and the local OpenSubtitles dataset for the Romanian subtitle job. | `main` |
-| #5 | `review-fixes` | Fixes from an in-depth code review of #4 and of the backend (login throttling behind Funnel, undecryptable sessions, stuck requests, subtitle job cooldowns, player and search bugs). The PR description lists every finding, including the ones deliberately not changed. | `spotlight-redesign` |
-| #6 | `handoff-docs` | This file, `AGENTS.md`, the mock gateway and the browser smoke test. | `review-fixes` |
-
-Each PR is stacked on the previous one. After merging one, GitHub retargets the next to `main`
-if the merged branch is deleted. Otherwise change the base by hand.
+The release integrates the Spotlight redesign (#4), review fixes (#5), and
+handoff tools (#6). PRs #5 and #6 originally merged into intermediate branches.
+The FileList scope remains Movies, TV Shows, and Anime. The release workflow
+pins the tag to the commit that built the assets.
 
 ## Verified
 - Automated tests: `npm test` (46 pass, 1 skipped on Windows), `npm run test:py` (16), typecheck, build.
@@ -24,7 +20,7 @@ if the merged branch is deleted. Otherwise change the base by hand.
   the TV user agent.
 - **Skip intro / credits with real data.** That needs Jellyfin 10.10+ MediaSegments or the Intro
   Skipper plugin on the server; only mock data has been used.
-- **Deploying #4–#6 to the server.** The server still runs the code from `main`.
+- **Live deployment and device upgrade.** Verify the updater logs, the gateway version and served bundle, and client installation.
 - **#5 against real services:** login throttling through Funnel, and qBittorrent request
   handling (removed torrents, interrupted searches).
 - **The local OpenSubtitles dataset.** It isn't downloaded on the server yet. Setup is in the
@@ -42,9 +38,8 @@ if the merged branch is deleted. Otherwise change the base by hand.
   (probably Jellyfin's own OpenSubtitles plugin).
 - **Subtitle job cooldowns:** online providers 7 days, local dataset 30 days, tracked separately
   so a local miss doesn't block the online providers.
-- **Untagged FileList RSS feeds** only keep titles with video release tags (resolution, source,
-  codec, season), because their categories can't be checked.
-- **Desene (15) and Docs (16)** are included in default FileList searches on purpose.
+- **FileList categories** stay limited to Movies, TV Shows, and Anime. Untagged RSS
+  entries are omitted because their category cannot be verified.
 - **FileList search** is open to all signed-in users (the Requests page uses it), so they share
   the global hourly quota.
 
