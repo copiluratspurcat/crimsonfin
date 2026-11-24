@@ -2,6 +2,12 @@
 
 _Last updated: 2026-11-24. Update this file at the end of every work session (see `AGENTS.md`)._
 
+## Release 2.5.8
+
+The live FileList API returned valid rows with English labels such as Movies HD
+and TV-Series HD. The gateway now accepts those aliases alongside Romanian
+labels and IDs, with the same Movies, TV Shows, and Anime allowlist.
+
 ## Release 2.5.7
 
 The release integrates the Spotlight redesign (#4), review fixes (#5), and
