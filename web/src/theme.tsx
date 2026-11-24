@@ -1,10 +1,10 @@
 import { useState } from 'react';
 
 const themes = [
-  ['crimson', 'Crimson'],
-  ['midnight', 'Midnight Blue'],
-  ['forest', 'Forest Green'],
-  ['violet', 'Violet']
+  ['crimson', 'Crimson', '#d92a43'],
+  ['midnight', 'Midnight Blue', '#3e6bd8'],
+  ['forest', 'Forest Green', '#2e9e6a'],
+  ['violet', 'Violet', '#8e5bd8']
 ] as const;
 const key = 'crimsonfin.theme';
 
@@ -23,15 +23,13 @@ export function initTheme() {
 
 export function ThemePicker() {
   const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'crimson');
-  return <div className="setting-card theme-settings">
-    <h3><label htmlFor="app-theme">App theme</label></h3>
-    <select id="app-theme" value={theme} onChange={event => {
-      const value = event.target.value;
-      setTheme(value);
-      document.documentElement.dataset.theme = value;
-      try { localStorage.setItem(key, value); } catch {}
-    }}>
-      {themes.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-    </select>
+  const choose = (value: string) => {
+    setTheme(value);
+    document.documentElement.dataset.theme = value;
+    try { localStorage.setItem(key, value); } catch {}
+  };
+  return <div className="swatches" role="radiogroup" aria-label="App theme">
+    {themes.map(([id, label, color]) => <button key={id} role="radio" aria-checked={theme === id} aria-label={label} title={label}
+      className={theme === id ? 'swatch active' : 'swatch'} style={{ background: color }} onClick={() => choose(id)} />)}
   </div>;
 }
