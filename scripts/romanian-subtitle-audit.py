@@ -374,16 +374,20 @@ def refresh_jellyfin(item, cfg):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Add validated human-provider subtitles that are missing")
+    parser.add_argument("--local-only", action="store_true",
+                        help="Use the local OpenSubtitles dataset exclusively")
     parser.add_argument("--limit", type=int, default=4, help="Maximum online provider lookups per scan (1-10)")
     parser.add_argument("--local-limit", type=int, default=200,
                         help="Maximum local OpenSubtitles dataset lookups per scan (no network, 1-5000)")
     options = parser.parse_args()
-    limit = min(10, max(1, options.limit))
+    limit = 0 if options.local_only else min(10, max(1, options.limit))
     local_limit = min(5000, max(1, options.local_limit))
     cfg = environment()
+    dataset = LocalDataset.from_config(cfg)
+    if options.local_only and (not dataset or not (dataset.ranged or dataset.unranged)):
+        parser.error("--local-only requires an OpenSubtitles metadata index and at least one local dump")
     user = admin_id(cfg)
     items = all_items(cfg, user=user)
-    dataset = LocalDataset.from_config(cfg)
     series_imdb = series_imdb_ids(cfg, user) if dataset else {}
     if dataset:
         print(f"Local OpenSubtitles dataset: {len(dataset.ranged) + len(dataset.unranged)} dump file(s)")
@@ -401,7 +405,7 @@ def main():
             summary["haveRomanian"] += 1
             continue
         summary["possiblyMissing"] += 1
-        online_due = time.time() - attempts.get(item.get("Id"), 0) >= ONLINE_RETRY
+        online_due = limit > 0 and time.time() - attempts.get(item.get("Id"), 0) >= ONLINE_RETRY
         local_due = bool(dataset) and time.time() - local_attempts.get(item.get("Id"), 0) >= LOCAL_RETRY
         if online_due or local_due:
             pending.append((item, path, online_due, local_due))
