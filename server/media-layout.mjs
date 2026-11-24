@@ -1,4 +1,6 @@
-import path from 'node:path';
+// Library and download paths are Linux paths reported by Jellyfin/qBittorrent on the server;
+// handle them as POSIX paths regardless of the platform running the code (or its tests).
+import { posix as path } from 'node:path';
 import { createHash } from 'node:crypto';
 
 // Parse only the untrusted bencoded torrent metadata, never execute or fetch
