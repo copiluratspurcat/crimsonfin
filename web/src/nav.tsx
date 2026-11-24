@@ -52,10 +52,11 @@ export function TopNav({ tab, user, onTab, onOpen, onSearchAll, onSignOut }: Nav
 
 function TitleLanguageSwitch() {
   const romanian = usePrefs().titleLanguage === 'ro';
+  const nextLanguage = romanian ? 'en' : 'ro';
   return <button type="button" className="title-language" role="switch"
     aria-label="Romanian media titles" aria-checked={romanian}
-    title="Title language · English / Română"
-    onClick={() => setPrefs({ titleLanguage: romanian ? 'en' : 'ro' })}>
+    title="Preferred language for titles and subtitles · English / Română"
+    onClick={() => setPrefs({ titleLanguage: nextLanguage, subtitleLanguage: nextLanguage })}>
     <span aria-hidden="true">EN</span><span aria-hidden="true" lang="ro">RO</span>
   </button>;
 }

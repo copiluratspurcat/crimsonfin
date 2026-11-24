@@ -109,7 +109,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
   const streams = source?.MediaStreams || [];
   const audioTracks = useMemo(() => streams.filter(s => s.Type === 'Audio'), [streams]);
   const subtitleTracks = useMemo(() => streams.filter(isSubtitleUsable), [streams]);
-  // 'Auto' follows the remembered subtitle language (Romanian unless changed in Settings or the player).
+  // 'Auto' follows the remembered subtitle language (set in the main menu, Settings, or the player).
   const autoSubtitle = prefs.subtitleLanguage === 'off' ? undefined
     : subtitleTracks.find(s => languageKey(s.Language) === prefs.subtitleLanguage);
   const activeSubtitle = subtitleChoice === 'auto'
@@ -571,7 +571,9 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
           </select></label>
         <label className="field"><span><Captions aria-hidden/> Subtitles</span>
           <select value={subtitleChoice} onChange={e => chooseSubtitle(e.target.value)} disabled={!source}>
-            <option value="auto">Auto · prefer Romanian</option>
+            <option value="auto">{prefs.subtitleLanguage === 'off'
+              ? 'Auto · subtitles off'
+              : `Auto · prefer ${languageLabel(prefs.subtitleLanguage)}`}</option>
             <option value="off">Off</option>
             {subtitleTracks.map(s => <option key={s.Index} value={String(s.Index)}>
               {languageLabel(s.Language)} · {s.DisplayTitle || s.Codec || 'Subtitles'}

@@ -2,6 +2,22 @@
 
 _Last updated: 2026-11-24. Update this file at the end of every work session (see `AGENTS.md`)._
 
+## Release and deployment
+
+The owner has authorized publishing and deploying completed CrimsonFin updates
+without waiting for a separate request. Verify the change, bump the package and
+lockfile versions before merging the release PR, and start deployment to
+hoesmad as soon as verification passes. Main triggers the release workflow and
+the server updater tracks the latest stable GitHub Release. Verify the published
+tag and update assets, the deployed gateway version, and the public health
+endpoint before reporting success.
+
+## Shared title and subtitle preference
+
+Selecting EN or RO in the main menu also sets the player's automatic subtitle
+language. The active preference appears in the Auto option. Users can still
+pick a specific subtitle track or turn subtitles off in the player.
+
 ## Release 2.5.9
 
 Includes the English and Romanian title switch, local-only Romanian subtitle
