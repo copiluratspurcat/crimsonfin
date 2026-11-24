@@ -124,7 +124,8 @@ export function useArtworkAccent(url?: string) {
           if (score > best.score) best = { score, h, s };
         }
         if (best.score < 0.08) return; // greyscale artwork: keep the theme accent
-        const color = `hsl(${Math.round(best.h * 360)} ${Math.round(Math.max(0.55, best.s) * 100)}% 72%)`;
+        // Clamp saturation so vivid artwork (neon greens, etc.) still yields a calm, readable accent.
+        const color = `hsl(${Math.round(best.h * 360)} ${Math.round(Math.min(0.62, Math.max(0.45, best.s)) * 100)}% 74%)`;
         setAccent({ color, text: '#0e0d10' });
       } catch { /* cross-origin or decode failure: keep theme accent */ }
     };

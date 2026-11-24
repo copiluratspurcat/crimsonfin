@@ -358,7 +358,7 @@ export function createAppServer(options = {}) {
         if (episodes && req.method === 'GET') {
           const season = url.searchParams.get('seasonId');
           return json(res, 200, await jellyfin(`/Shows/${safeId(episodes[1])}/Episodes?${new URLSearchParams({
-            UserId: user.userId, ...(season ? { SeasonId: safeId(season) } : {})
+            UserId: user.userId, Fields: 'Overview', ...(season ? { SeasonId: safeId(season) } : {})
           })}`, user));
         }
         const favorite = pathname.match(/^\/api\/items\/([\w-]+)\/favorite$/);
