@@ -1,3 +1,4 @@
+import { useMediaTitle } from './titles';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Check, ChevronDown, Delete, Heart, Info, Play, Plus, Search, Star } from 'lucide-react';
@@ -17,12 +18,13 @@ function Meta({ item, extra }: { item: Item; extra?: string[] }) {
 export function HomePage({ hero, recent, upNext, movies, series, loading, error, onRetry, onOpen, onPlay }: Nav & {
   hero?: Item; recent: Item[]; upNext: Item[]; movies: Item[]; series: Item[]; loading: boolean; error?: string; onRetry: () => void;
 }) {
+  const heroTitle = useMediaTitle(hero);
   return <div className="page home">
     {hero ? <section className="spotlight">
       <div className="spotlight-art" aria-hidden><Artwork sources={[itemArt(hero, 'Backdrop')]} /></div>
       <div className="spotlight-info">
         <span className="chip">Featured from your library</span>
-        <h1>{hero.Name}</h1>
+        <h1>{heroTitle}</h1>
         <Meta item={hero} />
         {hero.Overview && <p className="synopsis">{hero.Overview}</p>}
         <div className="actions">
@@ -192,6 +194,7 @@ export function DetailsPage({ item, nextUp, onBack, onPlay, onChanged }: {
 }) {
   const details = useQuery({ queryKey: ['item', item.Id], queryFn: () => api<Item>(`/api/items/${item.Id}`) });
   const media = details.data || item;
+  const title = useMediaTitle(media);
   const series = item.Type === 'Series';
   const seasons = useQuery({ queryKey: ['seasons', item.Id], queryFn: () => api<PageResult>(`/api/series/${item.Id}/seasons`), enabled: series });
   const [seasonId, setSeasonId] = useState('');
@@ -214,7 +217,7 @@ export function DetailsPage({ item, nextUp, onBack, onPlay, onChanged }: {
     <div className="details-info">
       <button className="back-link" data-back onClick={onBack}><ArrowLeft aria-hidden /> Back</button>
       <span className="chip accent">{series ? `Series${seasons.data?.Items.length ? ` · ${seasons.data.Items.length} season${seasons.data.Items.length === 1 ? '' : 's'}` : ''}` : 'Movie'}</span>
-      <h1>{item.Name}</h1>
+      <h1>{title}</h1>
       <Meta item={media} />
       {media.Overview && <p className="synopsis">{media.Overview}</p>}
       <div className="actions">

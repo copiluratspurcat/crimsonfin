@@ -92,7 +92,7 @@ export function createMockServer({ dist = path.join(ROOT, 'dist'), art = path.jo
       res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'max-age=3600' }); return res.end(readFileSync(file));
     }
     if (p === '/api/health') return json(res, 200, { ok: true });
-    if (p === '/api/auth/me') return json(res, 200, { user: { id: 'u', name: 'guest', isAdmin: true } });
+    if (p === '/api/auth/me') return json(res, 200, { user: { id: 'u', name: 'guest', isAdmin: true }, titleTranslations: true });
     if (p === '/api/library') {
       const q = url.searchParams, t = q.get('type');
       let list = t === 'series' ? series : t === 'all' ? [...movies, ...extraMovies, ...series] : [...movies, ...extraMovies];
@@ -111,6 +111,9 @@ export function createMockServer({ dist = path.join(ROOT, 'dist'), art = path.jo
     if (p === '/api/nextup') return json(res, 200, page(nextup));
     if (p === '/api/search') { const q = (url.searchParams.get('q') || '').toLowerCase(); return json(res, 200, page([...movies, ...series].filter(i => i.Name.toLowerCase().includes(q)))); }
     let m;
+    if ((m = p.match(/^\/api\/items\/(\w+)\/titles$/))) {
+      return json(res, 200, m[1] === movies[0].Id ? { en: movies[0].Name, ro: 'Portul noaptea' } : {});
+    }
     if ((m = p.match(/^\/api\/items\/(\w+)\/segments$/))) return json(res, 200, { intro: { start: 0, end: 75 }, credits: { start: 3000, end: 3300 } });
     if ((m = p.match(/^\/api\/items\/(\w+)\/(played|progress|favorite)$/))) {
       for (const it of all.filter(i => i.Id === m[1])) {

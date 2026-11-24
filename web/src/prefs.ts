@@ -1,14 +1,15 @@
 import { useSyncExternalStore } from 'react';
 
-/** Playback preferences remembered on this device. */
+/** Display and playback preferences remembered on this device. */
 export type Prefs = {
+  titleLanguage: 'en' | 'ro';
   /** Preferred subtitle language: an ISO 639 code ('ro', 'en', 'fr', …) or 'off'. */
   subtitleLanguage: string;
   subtitleSize: 'normal' | 'large' | 'xlarge';
   subtitleBackground: 'solid' | 'shadow' | 'none';
   autoplayNext: boolean;
 };
-const defaults: Prefs = { subtitleLanguage: 'ro', subtitleSize: 'normal', subtitleBackground: 'solid', autoplayNext: true };
+const defaults: Prefs = { titleLanguage: 'ro', subtitleLanguage: 'ro', subtitleSize: 'normal', subtitleBackground: 'solid', autoplayNext: true };
 const key = 'crimsonfin.prefs';
 const listeners = new Set<() => void>();
 let current: Prefs = load();

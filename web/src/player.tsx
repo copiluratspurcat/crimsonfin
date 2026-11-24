@@ -1,3 +1,4 @@
+import { useMediaTitle } from './titles';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { isTv } from './tv';
@@ -18,7 +19,7 @@ type StreamInfo = {
   DeliveryMethod?: string;
 };
 type MediaSource = { Id: string; MediaStreams?: StreamInfo[]; DefaultAudioStreamIndex?: number; DefaultSubtitleStreamIndex?: number };
-type PlayerItem = { Id: string; Name: string; Type?: string; SeriesId?: string; SeriesName?: string; ParentIndexNumber?: number; IndexNumber?: number;
+type PlayerItem = { Id: string; Name: string; OriginalTitle?: string; Type?: string; SeriesId?: string; SeriesName?: string; ParentIndexNumber?: number; IndexNumber?: number;
   ImageTags?: { Primary?: string }; UserData?: { PlaybackPositionTicks?: number } };
 type Segments = { intro: { start: number; end: number } | null; credits: { start: number; end: number } | null };
 type Details = PlayerItem & { MediaSources?: MediaSource[] };
@@ -50,6 +51,7 @@ declare global {
 }
 
 export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: () => void; onNext?: (next: PlayerItem) => void }) {
+  const mediaTitle = useMediaTitle(item);
   const prefs = usePrefs();
   const videoRef = useRef<HTMLVideoElement>(null);
   const screenRef = useRef<HTMLDivElement>(null);
@@ -478,7 +480,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
   const max = Math.max(1, duration);
   const hidden = idle && playing && !showOptions && !status;
   const cueClass = `cue-${prefs.subtitleSize} cue-bg-${prefs.subtitleBackground}`;
-  return <div className={`player ${cueClass}${hidden ? ' idle' : ''}`} role="dialog" aria-label={`Playing ${item.Name}`} aria-modal="true">
+  return <div className={`player ${cueClass}${hidden ? ' idle' : ''}`} role="dialog" aria-label={`Playing ${mediaTitle}`} aria-modal="true">
     <div className={fullscreen ? 'player-screen is-fullscreen' : 'player-screen'} ref={screenRef}
       onClick={e => { if (!isTv && e.target === videoRef.current) togglePlay(); }}
       onDoubleClick={e => { if (!isTv && e.target === videoRef.current) void toggleFullscreen(); }}>
@@ -497,7 +499,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
 
       <header className="player-top">
         <button className="player-icon" title="Back (Esc)" aria-label="Back to library" onClick={onClose}><ArrowLeft aria-hidden/></button>
-        <div className="player-title"><strong>{item.SeriesName || item.Name}</strong>
+        <div className="player-title"><strong>{mediaTitle}</strong>
           {item.SeriesName && <small>{item.Name}</small>}</div>
         <span className="player-badge"><i className="dot dot-green" aria-hidden/>{loading ? 'Preparing…' : [audioLabel, `${quality / 1_000_000} Mbps`].filter(Boolean).join(' · ')}</span>
       </header>

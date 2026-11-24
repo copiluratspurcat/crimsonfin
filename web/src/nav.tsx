@@ -1,3 +1,5 @@
+import { setPrefs, usePrefs } from './prefs';
+import { useMediaTitle } from './titles';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, CornerDownLeft, DownloadCloud, LogOut, Search, Settings2, ShieldCheck } from 'lucide-react';
@@ -36,6 +38,7 @@ export function TopNav({ tab, user, onTab, onOpen, onSearchAll, onSignOut }: Nav
       </nav>
     </div>
     <div className="topnav-right">
+      <TitleLanguageSwitch />
       {isTv ? <>
         <button className={settingsTab ? 'nav-icon active' : 'nav-icon'} aria-label="Settings" onClick={() => onTab('settings')}><Settings2 aria-hidden /></button>
         <span className="avatar" aria-label={user.name}>{user.name.slice(0, 1).toUpperCase()}</span>
@@ -45,6 +48,21 @@ export function TopNav({ tab, user, onTab, onOpen, onSearchAll, onSignOut }: Nav
       </>}
     </div>
   </header>;
+}
+
+function TitleLanguageSwitch() {
+  const romanian = usePrefs().titleLanguage === 'ro';
+  return <button type="button" className="title-language" role="switch"
+    aria-label="Romanian media titles" aria-checked={romanian}
+    title="Title language · English / Română"
+    onClick={() => setPrefs({ titleLanguage: romanian ? 'en' : 'ro' })}>
+    <span aria-hidden="true">EN</span><span aria-hidden="true" lang="ro">RO</span>
+  </button>;
+}
+
+function SearchResultTitle({ item, term }: { item: Item; term: string }) {
+  const title = useMediaTitle(item);
+  return <Highlight text={title} term={term} />;
 }
 
 function SearchBox({ onOpen, onSearchAll }: Pick<NavProps, 'onOpen' | 'onSearchAll'>) {
@@ -89,7 +107,7 @@ function SearchBox({ onOpen, onSearchAll }: Pick<NavProps, 'onOpen' | 'onSearchA
       {results.map((item, i) => <button key={item.Id} role="option" aria-selected={i === index} className={i === index ? 'result active' : 'result'}
         onMouseEnter={() => setIndex(i)} onClick={() => choose(item)}>
         <span className="result-art"><Artwork sources={[itemArt(item, 'Primary', 120)]} /></span>
-        <span className="result-text"><Highlight text={item.Name} term={term} />
+        <span className="result-text"><SearchResultTitle item={item} term={term} />
           <small>{item.Type === 'Series' ? 'Show' : 'Movie'}{item.ProductionYear ? ` · ${item.ProductionYear}` : ''}</small></span>
         {i === index && <CornerDownLeft className="enter-hint" aria-hidden />}
       </button>)}

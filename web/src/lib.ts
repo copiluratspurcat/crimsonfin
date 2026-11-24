@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 export type Account = { id: string; name: string; isAdmin: boolean };
 export type Item = {
   ImageTags?: { Primary?: string; Thumb?: string }; BackdropImageTags?: string[];
-  Id: string; Name: string; Type: string; Overview?: string; ProductionYear?: number;
+  Id: string; Name: string; OriginalTitle?: string; Type: string; Overview?: string; ProductionYear?: number;
   CommunityRating?: number; RunTimeTicks?: number; Genres?: string[]; DateCreated?: string;
   UserData?: { IsFavorite?: boolean; PlaybackPositionTicks?: number; PlayedPercentage?: number; Played?: boolean };
   IndexNumber?: number; IndexNumberEnd?: number; ParentIndexNumber?: number;

@@ -2,6 +2,23 @@
 
 _Last updated: 2026-11-24. Update this file at the end of every work session (see `AGENTS.md`)._
 
+## Release 2.5.9
+
+Includes the English and Romanian title switch, local-only Romanian subtitle
+lookup, and a display fallback for recognizable release filenames. The fallback
+does not alter the matching or artwork in Jellyfin. The gateway updater does
+not copy the subtitle scripts, so switching the subtitle job requires a
+separate service override and a verified local index and dump.
+
+## English and Romanian titles
+
+The top-right EN/RO switch changes displayed movie and show names and remembers the
+choice on the device. Set `TMDB_READ_ACCESS_TOKEN` in the gateway's `.env` to enable both
+localized titles for items with a Jellyfin TMDB ID. When a translation is missing,
+CrimsonFin uses Jellyfin's title (or its original title in English mode).
+Search matching and sort order still follow Jellyfin. The live TMDB configuration
+and a physical TV remain unverified.
+
 ## Release 2.5.8
 
 The live FileList API returned valid rows with English labels such as Movies HD
@@ -14,6 +31,13 @@ The release integrates the Spotlight redesign (#4), review fixes (#5), and
 handoff tools (#6). PRs #5 and #6 originally merged into intermediate branches.
 The FileList scope remains Movies, TV Shows, and Anime. The release workflow
 pins the tag to the commit that built the assets.
+
+## Local-only subtitles
+
+The subtitle audit accepts `--local-only` to disable internet providers. It
+requires a configured local metadata index and at least one dump. The
+`scripts/build-opensubs-index.py` helper builds a Romanian-only index from the
+published compressed metadata export.
 
 ## Verified
 - Automated tests: `npm test` (46 pass, 1 skipped on Windows), `npm run test:py` (16), typecheck, build.

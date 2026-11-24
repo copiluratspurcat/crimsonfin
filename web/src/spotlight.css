@@ -587,3 +587,22 @@ html:has(.player) { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+/* Compact two-position title language switch for mouse, keyboard and TV remote. */
+.title-language {
+  display: inline-grid;
+  grid-template-columns: repeat(2, 1fr);
+  flex: none;
+  padding: 3px;
+  border: 1px solid var(--s2);
+  border-radius: 999px;
+  background: var(--s1);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+.title-language span { padding: 5px 8px; border-radius: 999px; }
+.title-language[aria-checked="false"] span:first-child,
+.title-language[aria-checked="true"] span:last-child { background: var(--text); color: var(--bg); }
+.crimsonfin-tv .title-language { font-size: max(13px, calc(18 * var(--u))); }
+.spotlight-info h1, .details-info h1 { overflow-wrap: anywhere; }

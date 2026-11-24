@@ -25,7 +25,7 @@ const KEEP_ALIVE: Tab[] = ['home', 'movies', 'series', 'mylist'];
 
 function App() {
   const qc = useQueryClient();
-  const me = useQuery({ queryKey: ['me'], queryFn: () => api<{ user: Account }>('/api/auth/me'), retry: false });
+  const me = useQuery({ queryKey: ['me'], queryFn: () => api<{ user: Account; titleTranslations?: boolean }>('/api/auth/me'), retry: false });
   const [tab, setTab] = useState<Tab>('home');
   const [selected, setSelected] = useState<Item | null>(null);
   const [playing, setPlaying] = useState<Item | null>(null);

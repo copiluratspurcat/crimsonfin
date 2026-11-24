@@ -1,3 +1,4 @@
+import { createTitleTranslations } from './title-translations.mjs';
 import http from 'node:http';
 import https from 'node:https';
 import { readFileSync, existsSync, mkdirSync, createReadStream, statSync } from 'node:fs';
@@ -168,6 +169,8 @@ export function createAppServer(options = {}) {
   db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
   const limiter = new Map();
   const fetchImpl = options.fetchImpl || globalThis.fetch;
+  const titleToken = env.TMDB_READ_ACCESS_TOKEN?.trim();
+  const titleTranslations = createTitleTranslations(titleToken, fetchImpl);
   const downloadManager = createDownloadManager({ env, fetchImpl });
   const filelist = createFilelistService({ env, db, crypto: crypt, downloadManager, fetchImpl });
   const requestsFlow = createRequestFulfillment({ db, filelist, downloadManager });
@@ -338,7 +341,7 @@ export function createAppServer(options = {}) {
         if (pathname.startsWith('/jellyfin/')) return await streamJellyfin(req, res, user, pathname.slice('/jellyfin'.length), url.search);
         if (pathname === '/api/auth/me' && req.method === 'GET') {
           await jellyfin('/Users/Me', user);
-          return json(res, 200, { user: { id: user.userId, name: user.userName, isAdmin: user.isAdmin } });
+          return json(res, 200, { user: { id: user.userId, name: user.userName, isAdmin: user.isAdmin }, titleTranslations: !!titleToken });
         }
         if (pathname === '/api/library' && req.method === 'GET') {
           // Paged, sorted and filtered by Jellyfin so libraries of any size stay complete.
@@ -353,7 +356,7 @@ export function createAppServer(options = {}) {
           const limit = Math.max(1, Math.min(200, Number.parseInt(q.get('limit') || '60', 10) || 60));
           const genre = String(q.get('genre') || '').trim().slice(0, 80);
           const params = new URLSearchParams({
-            Recursive: 'true', IncludeItemTypes: type, Fields: 'Overview,Genres,PrimaryImageAspectRatio,ChildCount',
+            Recursive: 'true', IncludeItemTypes: type, Fields: 'Overview,Genres,PrimaryImageAspectRatio,ChildCount,OriginalTitle',
             SortBy: sortBy, SortOrder: sortOrder, StartIndex: String(start), Limit: String(limit), EnableTotalRecordCount: 'true'
           });
           if (genre) params.set('Genres', genre);
@@ -366,13 +369,13 @@ export function createAppServer(options = {}) {
           return json(res, 200, { genres: (data?.Items || []).map(g => String(g?.Name || '')).filter(Boolean).slice(0, 200) });
         }
         if (pathname === '/api/continue' && req.method === 'GET') return json(res, 200,
-          await jellyfin(`/Users/${user.userId}/Items/Resume?Limit=24&Fields=Overview,Genres`, user));
+          await jellyfin(`/Users/${user.userId}/Items/Resume?Limit=24&Fields=Overview,Genres,OriginalTitle`, user));
         if (pathname === '/api/nextup' && req.method === 'GET') return json(res, 200,
           await jellyfin(`/Shows/NextUp?UserId=${encodeURIComponent(user.userId)}&Limit=30`, user));
         if (pathname === '/api/search' && req.method === 'GET') {
           const term = String(url.searchParams.get('q') || '').trim().slice(0, 100);
           if (term.length < 2) return json(res, 200, { Items: [], TotalRecordCount: 0 });
-          return json(res, 200, await jellyfin(`/Users/${user.userId}/Items?${new URLSearchParams({ Recursive: 'true', IncludeItemTypes: 'Movie,Series', SearchTerm: term, Limit: '75' })}`, user));
+          return json(res, 200, await jellyfin(`/Users/${user.userId}/Items?${new URLSearchParams({ Recursive: 'true', IncludeItemTypes: 'Movie,Series', SearchTerm: term, Limit: '75', Fields: 'OriginalTitle' })}`, user));
         }
         const sync = pathname.match(/^\/api\/subtitle-sync\/([a-f\d-]{32,36})\/([a-f\d-]{32,36})\/(\d{1,3})\/(\d{1,3})$/i);
         if (sync && req.method === 'GET') {
@@ -389,9 +392,16 @@ export function createAppServer(options = {}) {
             'cache-control': 'no-store', 'content-type': 'text/vtt; charset=utf-8'
           }).end(result.captions);
         }
+        const titleItem = pathname.match(/^\/api\/items\/([\w-]+)\/titles$/);
+        if (titleItem && req.method === 'GET') {
+          if (!titleToken) return json(res, 200, {});
+          const id = safeId(titleItem[1]);
+          const item = await jellyfin(`/Users/${user.userId}/Items/${id}?Fields=ProviderIds`, user);
+          return json(res, 200, await titleTranslations(item));
+        }
         const item = pathname.match(/^\/api\/items\/([\w-]+)$/);
         if (item && req.method === 'GET') return json(res, 200,
-          await jellyfin(`/Users/${user.userId}/Items/${safeId(item[1])}?Fields=Overview,Genres,People,MediaSources,MediaStreams`, user));
+          await jellyfin(`/Users/${user.userId}/Items/${safeId(item[1])}?Fields=Overview,Genres,People,MediaSources,MediaStreams,OriginalTitle`, user));
         const seasons = pathname.match(/^\/api\/series\/([\w-]+)\/seasons$/);
         if (seasons && req.method === 'GET') return json(res, 200,
           await jellyfin(`/Shows/${safeId(seasons[1])}/Seasons?UserId=${encodeURIComponent(user.userId)}`, user));
