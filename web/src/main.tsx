@@ -39,9 +39,7 @@ function App() {
     mutationFn: () => api('/api/auth/logout', { method: 'POST' }),
     onSuccess: () => { qc.clear(); setSelected(null); setPlaying(null); setTab('home'); void qc.invalidateQueries({ queryKey: ['me'] }); }
   });
-  // A 401 from any library call means the Jellyfin session ended: re-check /me to show the login.
-  const sessionExpired = [movies.error, series.error, resume.error, nextup.error].some(error => statusOf(error) === 401);
-  useEffect(() => { if (sessionExpired) void qc.invalidateQueries({ queryKey: ['me'] }); }, [qc, sessionExpired]);
+  // A 401 from any query re-checks /me (see queryClient in lib.ts), which brings back the login.
   // Browse pages stay mounted once visited (hidden when not shown), so switching tabs or
   // leaving a details page doesn't rebuild every card and re-request its artwork.
   const [kept, setKept] = useState<Tab[]>(['home']);

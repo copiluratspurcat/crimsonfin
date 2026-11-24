@@ -68,7 +68,7 @@ export function WideCard({ item, onOpen, onPlay, subtitle, badge }: CardProps) {
  * (PC) or when the card has remote focus (TV). The panel is position:fixed so the
  * horizontally scrolling rows can't clip it.
  */
-export function CardMenu({ item, onOpen, className = 'card-menu' }: { item: Item; onOpen: (item: Item) => void; className?: string }) {
+export function CardMenu({ item, onOpen, className = 'card-menu' }: { item: Item; onOpen?: (item: Item) => void; className?: string }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const button = useRef<HTMLButtonElement>(null);
@@ -128,7 +128,7 @@ export function CardMenu({ item, onOpen, className = 'card-menu' }: { item: Item
         : <button role="menuitem" disabled={action.isPending} onClick={() => run('watched')}><Eye aria-hidden /> Mark as watched</button>}
       {item.Type !== 'Episode' && (favorite ? <button role="menuitem" disabled={action.isPending} onClick={() => run('unfavorite')}><HeartOff aria-hidden /> Remove from My list</button>
         : <button role="menuitem" disabled={action.isPending} onClick={() => run('favorite')}><Heart aria-hidden /> Add to My list</button>)}
-      {item.Type === 'Episode' && item.SeriesId && <button role="menuitem" onClick={() => { setOpen(false); onOpen(item); }}><Tv2 aria-hidden /> Go to series</button>}
+      {item.Type === 'Episode' && item.SeriesId && onOpen && <button role="menuitem" onClick={() => { setOpen(false); onOpen(item); }}><Tv2 aria-hidden /> Go to series</button>}
       {action.isPending && <p className="menu-label" role="status">Saving…</p>}
       {action.error && <p className="menu-error" role="alert">{action.error.message}</p>}
     </div>}

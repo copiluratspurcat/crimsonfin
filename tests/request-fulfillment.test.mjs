@@ -89,3 +89,30 @@ test('Tracker S03 whose actual torrent contains S04 is blocked before qBittorren
   assert.equal(f.getCalls(),0);
  }finally{f.db.close()}
 });
+
+test('A download removed from qBittorrent frees the request so it can be retried',async()=>{
+ const {db,service}=fixture();
+ const old=Date.now()-10*60_000;
+ service.save('requested-item',{state:'downloading',torrent_hash:'a'.repeat(40)});
+ db.prepare('UPDATE request_jobs SET updated_at=? WHERE request_id=?').run(old,'requested-item');
+ await service.syncProgress(); // qBittorrent's list (listRaw) no longer has the torrent
+ const row=service.get('requested-item');
+ assert.equal(row.state,'failed');
+ assert.match(row.detail,/removed from qBittorrent/);
+});
+
+test('A just-queued download is not marked removed before qBittorrent lists it',async()=>{
+ const {service}=fixture();
+ service.save('requested-item',{state:'queued',torrent_hash:'b'.repeat(40)});
+ await service.syncProgress();
+ assert.equal(service.get('requested-item').state,'queued');
+});
+
+test('A search interrupted by a restart does not block choosing a release',async()=>{
+ const {db,service,getCalls}=fixture();
+ service.save('requested-item',{state:'searching'});
+ db.prepare('UPDATE request_jobs SET updated_at=? WHERE request_id=?').run(Date.now()-5*60_000,'requested-item');
+ const outcome=await service.select('requested-item','admin','980045');
+ assert.equal(outcome.state,'queued');
+ assert.equal(getCalls(),1);
+});

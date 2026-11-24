@@ -71,7 +71,7 @@ async function makeWindow() {
   // LAN-first with a strictly pinned HTTPS certificate; remote is the fallback.
   const availableLocal = dev ? null : await probeLocal(config);
   approvedLocalOrigin = availableLocal;
-  const origin = availableLocal || remote;
+  let origin = availableLocal || remote;
   const win = new BrowserWindow({
     width: 1440, height: 900, minWidth: 850, minHeight: 580,
     backgroundColor: '#0e0d10', title: 'CrimsonFin', show: false, icon: path.join(__dirname, 'icon.png'),
@@ -99,6 +99,7 @@ async function makeWindow() {
     await win.loadURL(origin);
   } catch {
     if (availableLocal && remote && remote !== availableLocal) {
+      origin = remote;
       try { await win.loadURL(remote); } catch { unavailable(win); }
     } else unavailable(win);
   }

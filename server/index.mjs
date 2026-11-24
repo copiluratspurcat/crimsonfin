@@ -167,8 +167,6 @@ export function createAppServer(options = {}) {
   initRequestJobs(db);
   db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
   const limiter = new Map();
-  const cache = new Map();
-  const trackerQuota = new Map();
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   const downloadManager = createDownloadManager({ env, fetchImpl });
   const filelist = createFilelistService({ env, db, crypto: crypt, downloadManager, fetchImpl });
@@ -187,18 +185,19 @@ export function createAppServer(options = {}) {
         failure('Your Jellyfin session expired. Sign in again.', 401);
       }
       if (response.status === 403) failure('Jellyfin denied access to this resource', 403);
+      if (response.status === 404) failure('This item is no longer in your Jellyfin library', 404);
       if (!response.ok) failure('Jellyfin is temporarily unavailable', 502);
       if (response.status === 204 || response.headers.get('content-length') === '0') return { ok: true };
       const raw = await response.text();
       return raw ? JSON.parse(raw) : { ok: true };
     } finally { clearTimeout(timeout); }
   }
-  /** Try each Jellyfin path in turn, moving on only when the upstream call failed (not on auth errors). */
+  /** Try each Jellyfin path in turn. A refused, missing or failing route moves on; an expired session does not. */
   async function jellyfinEither(paths, session, init) {
     let lastError;
     for (const relative of paths) {
       try { return await jellyfin(relative, session, init); }
-      catch (error) { if (error?.status !== 502) throw error; lastError = error; }
+      catch (error) { if (![403, 404, 502].includes(error?.status)) throw error; lastError = error; }
     }
     throw lastError;
   }
@@ -207,8 +206,14 @@ export function createAppServer(options = {}) {
     if (!raw || raw.length > 128) failure('Please sign in', 401);
     const session = db.prepare('SELECT * FROM sessions WHERE id_hash = ? AND expires_at > ?').get(hash(raw), Date.now());
     if (!session) failure('Session expired. Please sign in again', 401);
+    let token;
+    try { token = crypt.decrypt(session.token_enc); }
+    catch {
+      db.prepare('DELETE FROM sessions WHERE id_hash = ?').run(session.id_hash);
+      failure('Session expired. Please sign in again', 401);
+    }
     return { userId: session.user_id, userName: session.user_name, isAdmin: Boolean(session.is_admin),
-      deviceId: session.device_id, token: crypt.decrypt(session.token_enc), sessionHash: session.id_hash };
+      deviceId: session.device_id, token, sessionHash: session.id_hash };
   }
   function requireAdmin(session) { if (!session.isAdmin) failure('Administrator access required', 403); }
   function verifyMutation(req) {
@@ -244,7 +249,7 @@ export function createAppServer(options = {}) {
     // Artwork may be cached by the viewer's browser (never shared caches). A `tag` query
     // pins the exact image version, so a new tag means new artwork: safe to keep for a week.
     // Streams, playlists and subtitles stay uncached.
-    const isImage = /^\/Items\/[\w-]+\/Images\//.test(pathname) && upstream.ok;
+    const isImage = /^\/Items\/[\w-]+\/Images\//i.test(pathname) && upstream.ok;
     passHeaders['cache-control'] = !isImage ? 'private, no-store'
       : uri.searchParams.has('tag') ? 'private, max-age=604800, immutable' : 'private, max-age=3600';
     if (/\.m3u8(?:\?|$)/i.test(uri.pathname) && upstream.ok && req.method === 'GET') {
@@ -293,18 +298,22 @@ export function createAppServer(options = {}) {
       if (req.method === 'GET' && pathname === '/api/health') return json(res, 200, { ok: true, service: 'CrimsonFin' });
       if (req.method === 'POST' && pathname === '/api/auth/login') {
         verifyMutation(req);
-        const ip = req.socket.remoteAddress || 'unknown';
-        const count = (limiter.get(ip) || []).filter(t => t + 15 * 60e3 > now);
-        if (count.length >= 8) failure('Too many login attempts. Try later.', 429);
-        limiter.set(ip, [...count, now]);
         const form = await bodyJson(req);
         if (!secureString(form.username) || !form.username.trim() || form.username.length > 100 || !secureString(form.password) || !form.password) failure('Enter a valid username and password');
+        const recent = key => (limiter.get(key) || []).filter(t => t + 15 * 60e3 > now);
+        const userKey = 'user:' + form.username.trim().toLowerCase();
+        if (recent(userKey).length >= 8 || recent('*').length >= 100) failure('Too many login attempts. Try later.', 429);
+        const failed = () => {
+          if (limiter.size > 1000) for (const [key, times] of limiter) if (!times.some(t => t + 15 * 60e3 > now)) limiter.delete(key);
+          limiter.set(userKey, [...recent(userKey), now]);
+          limiter.set('*', [...recent('*'), now]);
+        };
         const deviceId = 'crimsonfin-' + randomUUID();
         const response = await fetchImpl(jellyfinBase + '/Users/AuthenticateByName', {
           method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/json',
             authorization: authHeader(deviceId) }, body: JSON.stringify({ Username: form.username, Pw: form.password })
         });
-        if (response.status === 401 || response.status === 403) failure('Invalid username or password', 401);
+        if (response.status === 401 || response.status === 403) { failed(); failure('Invalid username or password', 401); }
         if (!response.ok) failure('Jellyfin is unreachable or rejected this login', 502);
         const result = await response.json();
         const token = result.AccessToken;
@@ -314,7 +323,7 @@ export function createAppServer(options = {}) {
         db.prepare('INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(hash(id), user.Id,
           String(user.Name || form.username), Number(Boolean(user.Policy?.IsAdministrator)), deviceId,
           crypt.encrypt(token), now + (form.remember ? REMEMBER_MS : SESSION_MS), now);
-        limiter.delete(ip);
+        limiter.delete(userKey);
         return json(res, 200, { user: { id: user.Id, name: user.Name, isAdmin: Boolean(user.Policy?.IsAdministrator) } },
           { 'set-cookie': makeCookie(id, secure, Boolean(form.remember)) });
       }
@@ -336,9 +345,9 @@ export function createAppServer(options = {}) {
           const q = url.searchParams;
           const type = q.get('type') === 'series' ? 'Series' : q.get('type') === 'all' ? 'Movie,Series' : 'Movie';
           const sorts = { added: ['DateCreated', 'Descending'], name: ['SortName', 'Ascending'],
-            year: ['ProductionYear,SortName', 'Descending'], rating: ['CommunityRating,SortName', 'Descending'],
+            year: ['ProductionYear,SortName', 'Descending,Ascending'], rating: ['CommunityRating,SortName', 'Descending,Ascending'],
             played: ['DatePlayed', 'Descending'] };
-          const [sortBy, sortOrder] = sorts[q.get('sort')] || sorts.added;
+          const [sortBy, sortOrder] = Object.hasOwn(sorts, q.get('sort') || '') ? sorts[q.get('sort')] : sorts.added;
           const filters = { favorite: 'IsFavorite', played: 'IsPlayed' };
           const start = Math.max(0, Math.min(100000, Number.parseInt(q.get('start') || '0', 10) || 0));
           const limit = Math.max(1, Math.min(200, Number.parseInt(q.get('limit') || '60', 10) || 60));
@@ -348,7 +357,7 @@ export function createAppServer(options = {}) {
             SortBy: sortBy, SortOrder: sortOrder, StartIndex: String(start), Limit: String(limit), EnableTotalRecordCount: 'true'
           });
           if (genre) params.set('Genres', genre);
-          if (filters[q.get('filter')]) params.set('Filters', filters[q.get('filter')]);
+          if (Object.hasOwn(filters, q.get('filter') || '')) params.set('Filters', filters[q.get('filter')]);
           return json(res, 200, await jellyfin(`/Users/${user.userId}/Items?${params}`, user));
         }
         if (pathname === '/api/genres' && req.method === 'GET') {
@@ -560,7 +569,7 @@ export function createAppServer(options = {}) {
           let snapshot = null;
           try {
             const file = path.resolve(ROOT, env.DATA_DIR || './data', 'romanian-subtitle-audit.json');
-            if (existsSync(file) && statSync(file).size <= 64_000) {
+            if (existsSync(file) && statSync(file).size <= 4_000_000) {
               const raw = JSON.parse(readFileSync(file, 'utf8'));
               const summary = raw?.lastSummary || {};
               const safeInt = v => Math.max(0, Math.min(100_000, Math.round(Number(v) || 0)));

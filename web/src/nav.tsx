@@ -75,9 +75,11 @@ function SearchBox({ onOpen, onSearchAll }: Pick<NavProps, 'onOpen' | 'onSearchA
           if (e.key === 'ArrowDown') { e.preventDefault(); setIndex(i => Math.min(results.length, i + 1)); }
           if (e.key === 'ArrowUp') { e.preventDefault(); setIndex(i => Math.max(0, i - 1)); }
           if (e.key === 'Escape') { setOpen(false); input.current?.blur(); }
-          if (e.key === 'Enter' && term.length > 1) {
-            if (results[index]) choose(results[index]);
-            else { setOpen(false); onSearchAll(term); }
+          const typed = query.trim();
+          if (e.key === 'Enter' && typed.length > 1) {
+            // Results belong to the debounced term; if the text moved on, search for what was typed.
+            if (typed === term && results[index]) choose(results[index]);
+            else { setOpen(false); onSearchAll(typed); }
           }
         }} />
       <kbd>Ctrl K</kbd>

@@ -132,6 +132,74 @@ class TestLocalDataset(unittest.TestCase):
     def test_not_configured(self):
         self.assertIsNone(audit.LocalDataset.from_config({}))
 
+    def test_corrupt_zip_member_does_not_crash(self):
+        import io, zipfile
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("broken.srt", make_subtitles())
+        blob = bytearray(buffer.getvalue())
+        start = 30 + len("broken.srt")  # local header, then the compressed data
+        blob[start:start + 40] = b"\xff" * 40  # damaged deflate stream (zlib.error) or bad CRC
+        self.assertIsNone(audit.srt_from_zip(bytes(blob)))
+
+    def test_paths_with_uri_characters(self):
+        import shutil
+        root = Path(self.folder.name)
+        import os
+        odd = root / ("subs #2 100%" if os.name == "nt" else "subs #2 ?100%")  # '?' is invalid on Windows
+        odd.mkdir()
+        shutil.copy(root / "subtitles_all.db", odd / "subtitles_all.db")
+        dataset = audit.LocalDataset(str(odd / "subtitles_all.db"), [str(root / "dumps")])
+        try:
+            self.assertEqual(len(dataset.candidates(imdb=133093)), 2)
+        finally:
+            dataset.metadata.close()
+            for conn in dataset._connections.values():
+                conn.close()
+
+
+class TestApplyPending(unittest.TestCase):
+    """Local and online lookups keep separate retry cooldowns."""
+
+    def setUp(self):
+        self.calls = []
+        self.originals = (audit.dataset_candidate, audit.subliminal_candidate, audit.has_romanian)
+        audit.dataset_candidate = lambda *a: (self.calls.append("local"), (None, "not in local dataset index"))[1]
+        audit.subliminal_candidate = lambda *a: (self.calls.append("online"), (None, "no verified Romanian subtitle available"))[1]
+        audit.has_romanian = lambda *a: False
+
+    def tearDown(self):
+        audit.dataset_candidate, audit.subliminal_candidate, audit.has_romanian = self.originals
+
+    def run_scan(self, count, local_limit=200, limit=4):
+        pending = [({"Id": f"id{i}", "Name": f"T{i}"}, Path(f"t{i}.mkv"), True, True) for i in range(count)]
+        attempts, local_attempts = {}, {}
+        summary = {"attempted": 0, "installed": 0}
+        audit.apply_pending(pending, object(), {}, attempts, local_attempts, summary, {}, limit, local_limit)
+        return attempts, local_attempts, summary
+
+    def test_local_miss_does_not_start_online_cooldown(self):
+        attempts, local_attempts, summary = self.run_scan(10)
+        self.assertEqual(len(local_attempts), 10)
+        self.assertEqual(len(attempts), 4)  # only the titles the online providers actually tried
+        self.assertEqual(self.calls.count("online"), 4)
+        self.assertEqual(summary["attempted"], 10)
+
+    def test_state_pruning(self):
+        import tempfile, time as _time
+        with tempfile.TemporaryDirectory() as folder:
+            original = (audit.DATA, audit.STATE_PATH)
+            audit.DATA, audit.STATE_PATH = Path(folder), Path(folder) / "state.json"
+            try:
+                now = _time.time()
+                audit.save_state({"attempts": {"old": now - 8 * 86400, "new": now},
+                                  "localAttempts": {"old": now - 31 * 86400, "new": now - 20 * 86400}})
+                saved = audit.load_state()
+            finally:
+                audit.DATA, audit.STATE_PATH = original
+        self.assertEqual(list(saved["attempts"]), ["new"])
+        self.assertEqual(list(saved["localAttempts"]), ["new"])
+
 
 if __name__ == "__main__":
     unittest.main()

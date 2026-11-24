@@ -462,7 +462,13 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
     setVolume(v => Math.max(0, Math.min(1, Math.round((v + delta) * 10) / 10)));
   }
   function toggleSubtitles() {
-    if (activeSubtitle === 'off') setSubtitleChoice(lastSubtitleRef.current === 'off' ? 'auto' : lastSubtitleRef.current);
+    if (activeSubtitle === 'off') {
+      // Prefer the last explicit track, then the 'auto' language match, then the first usable track.
+      const last = lastSubtitleRef.current;
+      const remembered = last !== 'off' && last !== 'auto' && subtitleTracks.some(s => String(s.Index) === last) ? last : null;
+      const next = remembered ?? (autoSubtitle ? 'auto' : subtitleTracks[0] ? String(subtitleTracks[0].Index) : null);
+      if (next) setSubtitleChoice(next);
+    }
     else { lastSubtitleRef.current = subtitleChoice; setSubtitleChoice('off'); }
   }
 
@@ -546,7 +552,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
           <strong>S{nextEpisode.ParentIndexNumber} · E{nextEpisode.IndexNumber}  {nextEpisode.Name}</strong>
         </span>
         <span className="actions">
-          <button className="btn small primary" autoFocus onClick={() => onNext?.(nextEpisode)}><Play fill="currentColor" aria-hidden/> Play now</button>
+          <button className="btn small primary" autoFocus={isTv} onClick={() => onNext?.(nextEpisode)}><Play fill="currentColor" aria-hidden/> Play now</button>
           <button className="btn small" onClick={() => setDismissedNext(true)}>{autoNext ? 'Cancel' : 'Dismiss'}</button>
         </span>
       </section>}

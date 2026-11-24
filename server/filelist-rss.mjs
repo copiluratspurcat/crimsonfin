@@ -25,6 +25,7 @@ function safeTitle(value) {
     .replace(/passkey\s*[=:]\s*[^\s&]+/gi, '[redacted]')
     .trim().slice(0, 220);
 }
+const VIDEO_RELEASE = /(?:^|[\s._\-\[(])(?:2160p|1080[pi]|720p|576p|480p|4k|uhd|web[\s._-]?(?:dl|rip)|blu[\s._-]?ray|bdrip|brrip|dvd(?:rip|r)?|hdtv|hdrip|remux|[xh][\s._-]?26[45]|hevc|avc|s\d{1,2}(?:e\d{1,3})?)(?=$|[\s._\-\])])/i;
 function normalized(value) {
   return String(value).normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[._\-\[\]()]+/g, ' ').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -41,11 +42,14 @@ export function parseFilelistRss(xml, query, categories) {
   const terms = normalized(query).split(' ').filter(Boolean);
   const categoriesOf = entry => (Array.isArray(entry?.category) ? entry.category : [entry?.category])
     .map(category => category?.['#text'] ?? category).filter(category => !isBlankCategory(category));
-  // Feeds that never tag categories can't be filtered; only filter when the feed declares them.
+  // Feeds that never tag categories can't be filtered by category; for those, keep only
+  // titles that carry video release tags (resolution, source, codec, season), so games,
+  // software and similar uploads stay out. A specific category subset can't be enforced there.
   const feedHasCategories = entries.some(entry => categoriesOf(entry).length > 0);
   const results = entries.map(entry => {
     if (feedHasCategories && !categoriesOf(entry).some(category => isFilelistMediaCategory(category, categories))) return null;
     const name = safeTitle(entry?.title?.['#text'] ?? entry?.title);
+    if (!feedHasCategories && !VIDEO_RELEASE.test(name)) return null;
     if (!name || !terms.every(term => normalized(name).includes(term))) return null;
     // Never return RSS enclosure URLs, GUIDs, or descriptions: they may contain
     // the private tracker passkey. Only sanitized public-facing title metadata.
