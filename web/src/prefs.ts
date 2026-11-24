@@ -34,8 +34,9 @@ const aliases: Record<string, string[]> = {
 };
 /** Normalise a track language to the short code used in preferences. */
 export function languageKey(value?: string) {
-  const v = (value || '').toLowerCase();
-  return Object.keys(aliases).find(k => aliases[k].includes(v)) || v;
+  const v = (value || '').trim().toLowerCase().replace(/_/g, '-');
+  const base = v.split('-')[0];
+  return Object.keys(aliases).find(k => aliases[k].includes(base)) || v;
 }
 export const subtitleLanguages: [string, string][] = [
   ['ro', 'Romanian'], ['en', 'English'], ['fr', 'French'], ['de', 'German'], ['es', 'Spanish'], ['it', 'Italian'],

@@ -12,6 +12,12 @@ the server updater tracks the latest stable GitHub Release. Verify the published
 tag and update assets, the deployed gateway version, and the public health
 endpoint before reporting success.
 
+## Release 2.5.11
+
+English displays Jellyfin's localized name when a TMDB translation is unavailable.
+The player mounts only the selected text track, activates it by element identity,
+and tries another track in the preferred language if the first cannot load.
+
 ## Shared title and subtitle preference
 
 Selecting EN or RO in the main menu also sets the player's automatic subtitle
@@ -31,7 +37,7 @@ separate service override and a verified local index and dump.
 The top-right EN/RO switch changes displayed movie and show names and remembers the
 choice on the device. Set `TMDB_READ_ACCESS_TOKEN` in the gateway's `.env` to enable both
 localized titles for items with a Jellyfin TMDB ID. When a translation is missing,
-CrimsonFin uses Jellyfin's title (or its original title in English mode).
+CrimsonFin uses Jellyfin's localized title. The original title is only used if Jellyfin has no display name.
 Search matching and sort order still follow Jellyfin. The live TMDB configuration
 and a physical TV remain unverified.
 
