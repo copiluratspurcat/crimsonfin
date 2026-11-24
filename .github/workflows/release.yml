@@ -105,6 +105,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           name: CrimsonFin ${{ steps.meta.outputs.tag }}
           prerelease: false
           make_latest: true

@@ -189,3 +189,33 @@ test('a revoked Jellyfin login is rejected and can be replaced by a new sign-in'
   assert.equal((await request('/api/auth/me', cookie)).status, 401);
   assert.equal((await request('/api/auth/me', await login())).status, 200);
 });
+
+test('failed logins are throttled per username, not for everyone behind the same proxy', async t => {
+  const { url, login } = await fixture(t);
+  const attempt = (username, password) => fetch(url + '/api/auth/login', { method: 'POST',
+    headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, password }) });
+  for (let i = 0; i < 8; i++) assert.equal((await attempt('victim', 'wrong')).status, 401);
+  assert.equal((await attempt('victim', 'testpass')).status, 429);
+  await login('friend'); // same socket address, other user: still able to sign in
+});
+
+test('a session the gateway can no longer decrypt signs the user out instead of failing', async t => {
+  const { request, login, gateway } = await fixture(t);
+  const cookie = await login();
+  gateway.db.prepare("UPDATE sessions SET token_enc = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'").run();
+  assert.equal((await request('/api/auth/me', cookie)).status, 401);
+  assert.equal(gateway.db.prepare('SELECT COUNT(*) AS n FROM sessions').get().n, 0);
+});
+
+test('library sort and filter ignore inherited object keys', async t => {
+  const { request, login } = await fixture(t);
+  const cookie = await login();
+  for (const q of ['sort=__proto__', 'sort=constructor', 'filter=constructor', 'filter=__proto__']) {
+    assert.equal((await request('/api/library?' + q, cookie)).status, 200, q);
+    const sent = itemQueries.at(-1);
+    assert.equal(sent.get('SortBy'), 'DateCreated');
+    assert.equal(sent.get('Filters'), null);
+  }
+  await request('/api/library?sort=year', cookie);
+  assert.equal(itemQueries.at(-1).get('SortOrder'), 'Descending,Ascending');
+});

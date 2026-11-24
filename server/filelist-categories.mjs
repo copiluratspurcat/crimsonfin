@@ -4,7 +4,7 @@ const media = new Map([
   ['4', 'Filme HD'], ['6', 'Filme 4K'], ['19', 'Filme HD-RO'],
   ['20', 'Filme Blu-Ray'], ['25', 'Filme 3D'], ['26', 'Filme 4K Blu-Ray'],
   ['21', 'Seriale HD'], ['23', 'Seriale SD'], ['27', 'Seriale 4K'],
-  ['24', 'Anime'], ['15', 'Desene'], ['16', 'Docs']
+  ['24', 'Anime']
 ]);
 const normalize = value => String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
 

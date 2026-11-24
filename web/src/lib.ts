@@ -1,4 +1,4 @@
-import { QueryClient } from '@tanstack/react-query';
+import { QueryCache, QueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 
 export type Account = { id: string; name: string; isAdmin: boolean };
@@ -42,7 +42,13 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 export const statusOf = (error: unknown) =>
   error && typeof error === 'object' && 'status' in error ? (error as { status?: number }).status : undefined;
 
-export const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 40_000, refetchOnWindowFocus: false } } });
+export const queryClient: QueryClient = new QueryClient({
+  // A 401 from any query means the gateway session ended: re-check /me so the login screen appears.
+  queryCache: new QueryCache({ onError: (error, query) => {
+    if (statusOf(error) === 401 && query.queryKey[0] !== 'me') void queryClient.invalidateQueries({ queryKey: ['me'] });
+  } }),
+  defaultOptions: { queries: { retry: (count, error) => statusOf(error) !== 401 && count < 1, staleTime: 40_000, refetchOnWindowFocus: false } }
+});
 
 export type ArtKind = 'Primary' | 'Backdrop' | 'Thumb';
 /** Artwork URL. Pass Jellyfin's image tag when known: it pins the version, so the browser can cache it long-term. */

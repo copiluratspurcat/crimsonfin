@@ -16,7 +16,7 @@ test('FileList API uses an authenticated GET without a passkey in the URL', asyn
       assert.equal(u.searchParams.get('type'), 'name');
       assert.equal(u.searchParams.get('query'), 'Example Film');
       assert.deepEqual(new Set(u.searchParams.get('category').split(',')),
-        new Set(['1','2','3','4','6','19','20','25','26','21','23','27','24','15','16']));
+        new Set(['1','2','3','4','6','19','20','25','26','21','23','27','24']));
       assert.equal(u.searchParams.has('passkey'), false);
       assert.equal(init.headers.authorization, 'Basic ' + Buffer.from('sample-user:sample-passkey').toString('base64'));
       return Response.json([{ id: 42, name: 'Example.Film.2026.1080p', size: '1 GB', seeders: 14, category: '4',

@@ -130,7 +130,8 @@ export function createRequestFulfillment({db,filelist,downloadManager}){
   }
   async function select(requestId,userId,releaseId){
     const current=get(requestId);
-    if(current&&active(current.state))return current;
+    const staleSearch=current?.state==='searching'&&stamp()-current.updated_at>=90_000;
+    if(current&&active(current.state)&&!staleSearch)return current;
     const result=await options(requestId,userId);
     save(requestId,{state:'searching',release_id:String(releaseId)});
     try{return await queue(requestId,userId,releaseId,result)}
@@ -141,10 +142,14 @@ export function createRequestFulfillment({db,filelist,downloadManager}){
     if(!rows.length)return;
     const jobs=await downloadManager.listRaw();
     const byHash=new Map(jobs.map(j=>[String(j.hash).toLowerCase(),j]));
+    // listRaw caps the list at 500, so "missing" is only trusted below that.
+    const complete=jobs.length<500;
     for(const row of rows){
       const t=byHash.get(row.torrent_hash.toLowerCase());
       if(t){const state=Number(t.progress)>=1?'completed':'downloading';
         if(row.state!==state)save(row.request_id,{state});
+      } else if(complete&&stamp()-row.updated_at>120_000){
+        save(row.request_id,{state:'failed',detail:'The download was removed from qBittorrent. Retry or choose another release.'});
       }
     }
   }
