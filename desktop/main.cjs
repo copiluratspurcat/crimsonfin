@@ -74,7 +74,7 @@ async function makeWindow() {
   const origin = availableLocal || remote;
   const win = new BrowserWindow({
     width: 1440, height: 900, minWidth: 850, minHeight: 580,
-    backgroundColor: '#0b1019', title: 'CrimsonFin', show: false,
+    backgroundColor: '#0e0d10', title: 'CrimsonFin', show: false, icon: path.join(__dirname, 'icon.png'),
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.cjs'), partition: 'persist:crimsonfin' }
   });
   win.once('ready-to-show', () => win.show());

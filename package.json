@@ -39,6 +39,7 @@
   "build": {
     "appId": "app.crimsonfin.client",
     "productName": "CrimsonFin",
+    "icon": "build/icon.png",
     "directories": {
       "output": "releases"
     },
