@@ -16,7 +16,8 @@ const proxy = {
 export default defineConfig({
   plugins: [react()],
   root: 'web',
-  build: { outDir: '../dist', emptyOutDir: true, sourcemap: false },
+  // The player chunk is ~620 kB, almost all hls.js; it loads on demand, so allow it without a warning.
+  build: { outDir: '../dist', emptyOutDir: true, sourcemap: false, chunkSizeWarningLimit: 700 },
   server: {
     port: 5173,
     proxy: { '/api': proxy, '/jellyfin': proxy }

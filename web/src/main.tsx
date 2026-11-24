@@ -1,18 +1,24 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, queryClient, statusOf, type Account, type Item, type PageResult } from './lib';
 import { uniqueWatchEntries } from './continue-watching';
 import { TopNav, type Tab } from './nav';
 import { DetailsPage, HomePage, LibraryPage, MyListPage, SearchPage } from './pages';
-import { RequestsPage } from './requests';
-import { SettingsPage } from './settings';
 import { Login } from './login';
-import { Player } from './player';
 import { Logo } from './ui';
 import { initTheme } from './theme';
 import { enableTvNavigation } from './tv';
 import './spotlight.css';
+
+// Loaded on demand: the player (with hls.js) and the less-visited pages stay out of the first download.
+const Player = lazy(() => import('./player').then(m => ({ default: m.Player })));
+const RequestsPage = lazy(() => import('./requests').then(m => ({ default: m.RequestsPage })));
+const SettingsPage = lazy(() => import('./settings').then(m => ({ default: m.SettingsPage })));
+// Fetch the player in the background once the app is idle, so the first Play starts without waiting.
+const preloadPlayer = () => { void import('./player'); };
+if ('requestIdleCallback' in window) window.requestIdleCallback(preloadPlayer, { timeout: 8000 }); else setTimeout(preloadPlayer, 3000);
+const pageFallback = <div className="page"><p className="muted" role="status">Loading…</p></div>;
 
 /** Browse pages kept alive between visits (their cards and artwork stay in place). */
 const KEEP_ALIVE: Tab[] = ['home', 'movies', 'series', 'mylist'];
@@ -100,16 +106,16 @@ function App() {
       {keep('movies', <LibraryPage kind="movies" nextUp={[]} {...nav} />)}
       {keep('series', <LibraryPage kind="series" nextUp={upcoming.filter(i => i.Type === 'Episode')} {...nav} />)}
       {keep('mylist', <MyListPage watching={upcoming} loadingWatching={resume.isPending || nextup.isPending} {...nav} />)}
-      {!selected && <>
+      {!selected && <Suspense fallback={pageFallback}>
         {tab === 'search' && <SearchPage initial={searchTerm} {...nav} />}
         {tab === 'requests' && <RequestsPage user={user} onShowDownloads={() => goTab(user.isAdmin ? 'downloads' : 'requests')} />}
         {(tab === 'settings' || tab === 'downloads' || tab === 'admin') && <SettingsPage user={user} tab={tab} onTab={goTab} onSignOut={() => logout.mutate()} />}
-      </>}
+      </Suspense>}
     </main>
-    {playing && <Player key={playing.Id} item={playing} onNext={next => setPlaying(next as Item)} onClose={() => {
+    {playing && <Suspense fallback={<div className="player"><div className="player-message"><span className="spinner" aria-label="Loading player" /></div></div>}><Player key={playing.Id} item={playing} onNext={next => setPlaying(next as Item)} onClose={() => {
       setPlaying(null);
       for (const key of ['resume', 'nextup', 'movies', 'series', 'library', 'item', 'episodes']) void qc.invalidateQueries({ queryKey: [key] });
-    }} />}
+    }} /></Suspense>}
   </div>;
 }
 
