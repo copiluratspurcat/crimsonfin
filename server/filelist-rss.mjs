@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { isFilelistMediaCategory } from './filelist-categories.mjs';
+import { isBlankCategory, isFilelistMediaCategory } from './filelist-categories.mjs';
 import { XMLParser } from 'fast-xml-parser';
 
 const parser = new XMLParser({
@@ -39,9 +39,12 @@ export function parseFilelistRss(xml, query, categories) {
   if (!channel || !channel.item) return { configured: true, source: 'rss', results: [] };
   const entries = Array.isArray(channel.item) ? channel.item : [channel.item];
   const terms = normalized(query).split(' ').filter(Boolean);
+  const categoriesOf = entry => (Array.isArray(entry?.category) ? entry.category : [entry?.category])
+    .map(category => category?.['#text'] ?? category).filter(category => !isBlankCategory(category));
+  // Feeds that never tag categories can't be filtered; only filter when the feed declares them.
+  const feedHasCategories = entries.some(entry => categoriesOf(entry).length > 0);
   const results = entries.map(entry => {
-    const entryCategories = Array.isArray(entry?.category) ? entry.category : [entry?.category];
-    if (!entryCategories.some(category => isFilelistMediaCategory(category?.['#text'] ?? category, categories))) return null;
+    if (feedHasCategories && !categoriesOf(entry).some(category => isFilelistMediaCategory(category, categories))) return null;
     const name = safeTitle(entry?.title?.['#text'] ?? entry?.title);
     if (!name || !terms.every(term => normalized(name).includes(term))) return null;
     // Never return RSS enclosure URLs, GUIDs, or descriptions: they may contain
