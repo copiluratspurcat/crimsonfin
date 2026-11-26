@@ -6,27 +6,21 @@ The former main-branch state is retained in `legacy/v1.2.5-before-rebuild`.
 
 ## Release automation
 
-The workflow in `.github/workflows/release.yml`:
+Bump the version in both `package.json` and `package-lock.json` before merging
+to `main`. The release workflow runs the Node and Python tests, checks TypeScript,
+and builds the web app, Windows NSIS installer, Linux packages, and Android TV
+preview. It verifies the manifest versions and installer checksums, then publishes
+a stable release from a draft tied to the build commit. Each stable tag is used once.
 
-- Checks out, installs dependencies, runs seven automated tests and builds React.
-- Compiles a Windows x64 NSIS installer (`.exe`) on GitHub's Windows runner.
-- Compiles Linux x64 Debian (`.deb`) and AppImage packages on Ubuntu.
-- Uploads all installers to a GitHub Release after both builds succeed.
-- Publishes a **preview release** on each push to `main` with a `preview-N` tag.
-- Publishes a **stable release** when a `v*` tag (such as `v2.0.0`) is pushed.
-- Uses the built-in GitHub Actions `GITHUB_TOKEN` with `contents: write`;
-  do not store a personal access token in GitHub Actions or commit one.
+Set `TV_KEYSTORE` to the base64-encoded PKCS#12 keystore and
+`TV_KEYSTORE_PASSWORD` to its password in the repository's Actions secrets.
+The key alias is `crimsonfin-tv` and the key and store passwords are identical.
+Keep an offline backup and reuse the same keystore for every stable APK. When both
+secrets are absent, the release contains desktop packages and the debug preview
+is available as a separate Actions artifact. Existing debug previews require a
+one-time uninstall before installing a stable APK signed with a different key.
 
-Before releasing, set **Settings → Secrets and variables → Actions → Variables**
-in your repository:
-
-`CRIMSONFIN_PUBLIC_URL` = your working public HTTPS Funnel origin, including
-port 8443. The workflow generates `desktop/config.json` at build time.
-The file is deliberately ignored by Git to avoid publishing the hostname in
-source control. End users see **Local**/**Remote**, not IP addresses.
-
-The public hostname must still be embedded in the installer to connect to
-your server and is inherently discoverable by inspecting network traffic.
+Desktop packages use the HTTPS endpoint in `desktop/release-target.json`.
 
 ## Server
 
@@ -44,7 +38,7 @@ User submissions and administrative approvals are stored in SQLite.
 
 - `.exe` and `.deb` packages are not code-signed, so Windows SmartScreen and
   some Linux package warnings are possible.
-- Builds are automated; the app does not yet have an in-app auto-updater.
+- Windows installs updates on restart. Linux users install the update from the official release.
 - Test real Jellyfin accounts, playback, permissions, and remote bandwidth
   before distributing clients broadly.
 - If a GitHub token or tracker passkey was pasted into a chat, rotate it in

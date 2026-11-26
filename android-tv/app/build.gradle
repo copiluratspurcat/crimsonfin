@@ -5,7 +5,26 @@ plugins {
 }
 
 def gateway = new JsonSlurper().parse(file('../../desktop/release-target.json')).url
+def releaseVersion = new JsonSlurper().parse(file('../../package.json')).version
+def (major, minor, patch) = releaseVersion.tokenize('.').collect { it.toInteger() }
+def keyPath = System.getenv('TV_KEYSTORE_PATH')
 android {
+    signingConfigs {
+        if (keyPath) {
+            stable {
+                storeFile file(keyPath)
+                storeType 'PKCS12'
+                storePassword System.getenv('TV_KEYSTORE_PASSWORD')
+                keyAlias 'crimsonfin-tv'
+                keyPassword System.getenv('TV_KEYSTORE_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (keyPath) signingConfig signingConfigs.stable
+        }
+    }
     namespace 'app.crimsonfin.tv'
     compileSdk 35
 
@@ -13,8 +32,8 @@ android {
         applicationId 'app.crimsonfin.tv'
         minSdk 24
         targetSdk 35
-        versionCode 1
-        versionName '0.1.0'
+        versionCode major * 1000000 + minor * 1000 + patch
+        versionName releaseVersion
         buildConfigField 'String', 'GATEWAY_URL', '"' + gateway + '"'
     }
 

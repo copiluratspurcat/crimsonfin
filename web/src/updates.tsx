@@ -30,7 +30,7 @@ export function UpdatePanel() {
   }, [bridge]);
   if (!bridge) return <div className="setting">
     <span className="setting-text"><strong>App updates</strong>
-      <small>The web version runs straight from your server, so it is always current. Desktop apps update themselves from v2.5.0.</small></span>
+      <small>The web version runs straight from your server, so it is always current. Desktop apps check for updates automatically.</small></span>
     <span className="chip small">Web client</span>
   </div>;
   const message = state?.state ? names[state.state] || 'Automatic updates enabled' : 'Automatic updates enabled';
@@ -49,6 +49,7 @@ export function UpdatePanel() {
     {state?.state === 'downloading' && <span className="meter" role="progressbar" aria-label="Update download progress"
       aria-valuenow={Math.round(state.percent || 0)} aria-valuemin={0} aria-valuemax={100}><i style={{ width: Math.max(0, Math.min(100, state.percent || 0)) + '%' }} /></span>}
     {state?.state === 'error' && <small className="error-text">{state.message || 'Try again later.'}</small>}
-    <small className="muted">CrimsonFin checks GitHub Releases automatically. Windows updates install when you restart; Linux .deb updates may need package-manager approval.</small>
+    {state?.state === 'manual' && <small className="muted">{state.message}</small>}
+    <small className="muted">CrimsonFin checks GitHub Releases automatically. Windows installs updates on restart. Linux updates are installed from the official release.</small>
   </div>;
 }

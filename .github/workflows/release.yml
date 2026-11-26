@@ -3,18 +3,18 @@ name: Build and release CrimsonFin desktop
 on:
   push:
     branches: [main]
-    tags: ['v*']
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: crimsonfin-stable-release
   cancel-in-progress: false
 
 jobs:
   validate:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +26,7 @@ jobs:
       - run: npm test
       - name: Validate Romanian subtitle safety checks
         run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - run: npm run typecheck
       - run: npm run build
 
   build:
@@ -72,6 +73,9 @@ jobs:
   android-tv:
     needs: validate
     uses: ./.github/workflows/android-tv.yml
+    secrets:
+      TV_KEYSTORE: ${{ secrets.TV_KEYSTORE }}
+      TV_KEYSTORE_PASSWORD: ${{ secrets.TV_KEYSTORE_PASSWORD }}
 
   release:
     needs: [build, android-tv]
@@ -85,38 +89,34 @@ jobs:
           pattern: crimsonfin-*
           path: release-assets
           merge-multiple: true
-      - name: Verify required installers exist
-        shell: bash
-        run: |
-          find release-assets -maxdepth 1 -name '*.exe' | grep -q .
-          find release-assets -maxdepth 1 -name '*.deb' | grep -q .
-          test -s release-assets/CrimsonFin-TV-preview.apk
-      - name: Determine stable version tag
+      - name: Validate release version and installer assets
         id: meta
         shell: bash
         run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-      - name: Validate update feed manifests
-        shell: bash
-        run: |
-          python3 scripts/verify-update-manifests.py release-assets
+          version=$(node -p "require('./package.json').version")
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag="v$version"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          compgen -G 'release-assets/*.deb' > /dev/null
+          compgen -G 'release-assets/*.blockmap' > /dev/null
+          python3 scripts/verify-update-manifests.py release-assets "$version"
           find release-assets -maxdepth 1 -type f -name '*.exe' -size +40M | grep -q .
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.meta.outputs.tag }}
-          target_commitish: ${{ github.sha }}
-          name: CrimsonFin ${{ steps.meta.outputs.tag }}
-          prerelease: false
-          make_latest: true
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: |
-            release-assets/*.apk
-            release-assets/*.exe
-            release-assets/*.deb
-            release-assets/*.AppImage
-            release-assets/latest*.yml
-            release-assets/*.blockmap
+      - name: Publish verified release
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          existing_tag=$(git ls-remote --tags origin "refs/tags/$TAG")
+          if [[ -n "$existing_tag" ]]; then
+            echo "::error::$TAG already exists. Bump the version before publishing again."
+            exit 1
+          fi
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          if [[ "$latest" == "$TAG" || "$(printf '%s\n' "$latest" "$TAG" | sort -V | tail -n 1)" != "$TAG" ]]; then
+            echo "::error::$TAG must be newer than $latest."
+            exit 1
+          fi
+          gh release create "$TAG" release-assets/* --draft --target "$GITHUB_SHA" \
+            --title "CrimsonFin $TAG" --generate-notes
+          gh release edit "$TAG" --draft=false --latest

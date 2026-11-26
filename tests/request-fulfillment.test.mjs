@@ -150,3 +150,16 @@ test('completed requests clear only after confirming placement and explicit remo
    assert.equal(service.listRows({isAdmin:true}).length,0);
  } finally { db.close(); }
 });
+
+test('concurrent manual selections and automatic processing queue one torrent', async () => {
+ const {db,service,getCalls}=fixture();
+ try {
+   await Promise.all([
+     service.select('requested-item','admin','980045'),
+     service.select('requested-item','admin','980045'),
+     service.process('requested-item','admin')
+   ]);
+   assert.equal(service.get('requested-item').state,'queued');
+   assert.equal(getCalls(),1);
+ } finally { db.close(); }
+});

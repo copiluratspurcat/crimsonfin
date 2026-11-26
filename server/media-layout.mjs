@@ -68,7 +68,11 @@ export function parseTorrentInfo(buffer) {
   const files = Array.isArray(info.files)
     ? info.files.map(f => Array.isArray(f?.path) ? f.path.map(text).join('/') : '')
     : [text(info.name)];
-  return { rootName: text(info['name.utf-8'] || info.name), files,
+  const lengths = Array.isArray(info.files) ? info.files.map(file => file?.length) : [info.length];
+  const total = lengths.every(length => Number.isSafeInteger(length) && length >= 0)
+    ? lengths.reduce((sum, length) => sum + length, 0) : 0;
+  const sizeBytes = Number.isSafeInteger(total) && total > 0 ? total : null;
+  return { sizeBytes, rootName: text(info['name.utf-8'] || info.name), files,
     infoHash: infoBytes ? createHash('sha1').update(infoBytes).digest('hex') : '' };
 }
 const EXT = /\.(?:mkv|mp4|m4v|avi|webm|ts)$/i;

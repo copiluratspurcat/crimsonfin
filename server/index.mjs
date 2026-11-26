@@ -17,6 +17,7 @@ import { initRequestJobs, createRequestFulfillment } from './request-fulfillment
 import { createSubtitleSync } from './subtitle-sync.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const buildVersion = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const MAX_JSON = 16 * 1024;
 const MEDIA_ID = /^[a-f\d-]{32,36}$/i;
 const SESSION_MS = 14 * 864e5;
@@ -96,6 +97,10 @@ function initDb(db) {
       playback_id TEXT NOT NULL, played_at INTEGER NOT NULL, position_ticks INTEGER NOT NULL,
       PRIMARY KEY (user_id, series_id)
     );
+    CREATE TABLE IF NOT EXISTS dismissed_resume (
+      user_id TEXT NOT NULL, item_id TEXT NOT NULL, dismissed_at INTEGER NOT NULL,
+      PRIMARY KEY (user_id, item_id)
+    );
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `);
 }
@@ -140,13 +145,16 @@ function removeTokenQuery(uri) {
   return u;
 }
 export function rewriteM3u8(playlist, sourceUrl, upstreamBase) {
-  const upstreamOrigin = new URL(upstreamBase).origin;
+  const base = new URL(upstreamBase);
+  const prefix = base.pathname.replace(/\/$/, '');
   function proxied(raw) {
     const resolved = removeTokenQuery(new URL(raw, sourceUrl).href);
-    if (resolved.origin !== upstreamOrigin || !allowedMediaPath(resolved.pathname)) {
+    const path = prefix && resolved.pathname.startsWith(prefix + '/')
+      ? resolved.pathname.slice(prefix.length) : resolved.pathname;
+    if (resolved.origin !== base.origin || !allowedMediaPath(path)) {
       throw new Error('Playlist contains a disallowed upstream resource');
     }
-    return '/jellyfin' + resolved.pathname + resolved.search;
+    return '/jellyfin' + path + resolved.search;
   }
   return playlist.split(/\r?\n/).map(line => {
     if (!line.trim()) return line;
@@ -173,6 +181,9 @@ export function createAppServer(options = {}) {
   initRequestJobs(db);
   db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
   const limiter = new Map();
+  const pendingLogins = new Map();
+  let loginCount = 0;
+  const playbackReports = new Map();
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   const titleToken = env.TMDB_READ_ACCESS_TOKEN?.trim();
   const titleTranslations = createTitleTranslations(titleToken, fetchImpl);
@@ -223,7 +234,18 @@ export function createAppServer(options = {}) {
     return { userId: session.user_id, userName: session.user_name, isAdmin: Boolean(session.is_admin),
       deviceId: session.device_id, token, sessionHash: session.id_hash };
   }
-  function requireAdmin(session) { if (!session.isAdmin) failure('Administrator access required', 403); }
+  async function refreshIdentity(session) {
+    const identity = await (session.identity ??= jellyfin('/Users/Me', session));
+    if (!identity?.Id || identity.Id.toLowerCase() !== session.userId.toLowerCase() || identity.Policy?.IsDisabled) {
+      db.prepare('DELETE FROM sessions WHERE id_hash = ?').run(session.sessionHash);
+      failure('Your Jellyfin session expired. Sign in again.', 401);
+    }
+    session.isAdmin = identity.Policy?.IsAdministrator === true;
+  }
+  async function requireAdmin(session) {
+    await refreshIdentity(session);
+    if (!session.isAdmin) failure('Administrator access required', 403);
+  }
   function verifyMutation(req) {
     const origin = req.headers.origin;
     if (origin) {
@@ -247,6 +269,11 @@ export function createAppServer(options = {}) {
     if (req.headers.range) h.range = req.headers.range;
     if (req.headers['if-range']) h['if-range'] = req.headers['if-range'];
     const upstream = await fetchImpl(uri, { method: req.method, headers: h, signal: controller.signal, redirect: 'manual' });
+    if (upstream.status === 401) {
+      await upstream.body?.cancel();
+      db.prepare('DELETE FROM sessions WHERE id_hash = ?').run(session.sessionHash);
+      failure('Your Jellyfin session expired. Sign in again.', 401);
+    }
     if (upstream.status >= 300 && upstream.status < 400) failure('Upstream redirect blocked', 502);
     const passHeaders = {};
     for (const name of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified', 'cache-control']) {
@@ -303,27 +330,44 @@ export function createAppServer(options = {}) {
     const url = getPath(req.url || '/');
     const pathname = url.pathname;
     try {
-      if (req.method === 'GET' && pathname === '/api/health') return json(res, 200, { ok: true, service: 'CrimsonFin' });
+      if (req.method === 'GET' && pathname === '/api/health') return json(res, 200, { ok: true, service: 'CrimsonFin', version: buildVersion });
       if (req.method === 'POST' && pathname === '/api/auth/login') {
         verifyMutation(req);
         const form = await bodyJson(req);
         if (!secureString(form.username) || !form.username.trim() || form.username.length > 100 || !secureString(form.password) || !form.password) failure('Enter a valid username and password');
         const recent = key => (limiter.get(key) || []).filter(t => t + 15 * 60e3 > now);
         const userKey = 'user:' + form.username.trim().toLowerCase();
-        if (recent(userKey).length >= 8 || recent('*').length >= 100) failure('Too many login attempts. Try later.', 429);
+        if (recent(userKey).length + (pendingLogins.get(userKey) || 0) >= 8 ||
+            recent('*').length + loginCount >= 100) failure('Too many login attempts. Try later.', 429);
         const failed = () => {
           if (limiter.size > 1000) for (const [key, times] of limiter) if (!times.some(t => t + 15 * 60e3 > now)) limiter.delete(key);
           limiter.set(userKey, [...recent(userKey), now]);
           limiter.set('*', [...recent('*'), now]);
         };
         const deviceId = 'crimsonfin-' + randomUUID();
-        const response = await fetchImpl(jellyfinBase + '/Users/AuthenticateByName', {
-          method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/json',
-            authorization: authHeader(deviceId) }, body: JSON.stringify({ Username: form.username, Pw: form.password })
-        });
-        if (response.status === 401 || response.status === 403) { failed(); failure('Invalid username or password', 401); }
-        if (!response.ok) failure('Jellyfin is unreachable or rejected this login', 502);
-        const result = await response.json();
+        const abort = new AbortController();
+        const disconnect = () => abort.abort();
+        res.once('close', disconnect);
+        pendingLogins.set(userKey, (pendingLogins.get(userKey) || 0) + 1);
+        loginCount++;
+        let result;
+        try {
+          const response = await fetchImpl(jellyfinBase + '/Users/AuthenticateByName', {
+            method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/json',
+              authorization: authHeader(deviceId) }, body: JSON.stringify({ Username: form.username, Pw: form.password }),
+            signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10_000)])
+          });
+          if (response.status === 401 || response.status === 403) { failed(); failure('Invalid username or password', 401); }
+          if (!response.ok) failure('Jellyfin is unreachable or rejected this login', 502);
+          result = await response.json();
+          if (res.destroyed) return;
+        } finally {
+          res.off('close', disconnect);
+          loginCount--;
+          const count = pendingLogins.get(userKey) - 1;
+          if (count) pendingLogins.set(userKey, count);
+          else pendingLogins.delete(userKey);
+        }
         const token = result.AccessToken;
         const user = result.User;
         if (!user?.Id || !token) failure('Jellyfin returned an invalid login response', 502);
@@ -345,7 +389,7 @@ export function createAppServer(options = {}) {
         const user = await requireSession(req);
         if (pathname.startsWith('/jellyfin/')) return await streamJellyfin(req, res, user, pathname.slice('/jellyfin'.length), url.search);
         if (pathname === '/api/auth/me' && req.method === 'GET') {
-          await jellyfin('/Users/Me', user);
+          await refreshIdentity(user);
           return json(res, 200, { user: { id: user.userId, name: user.userName, isAdmin: user.isAdmin }, titleTranslations: !!titleToken });
         }
         if (pathname === '/api/library' && req.method === 'GET') {
@@ -377,7 +421,11 @@ export function createAppServer(options = {}) {
           const fields = 'Overview,Genres,OriginalTitle';
           const resume = await jellyfin(`/Users/${user.userId}/Items/Resume?Limit=80&Fields=${fields}`, user);
           const recent = db.prepare('SELECT * FROM last_played_episode WHERE user_id = ? ORDER BY played_at DESC LIMIT 80').all(user.userId);
-          if (!recent.length) return json(res, 200, resume);
+          const dismissals = db.prepare('SELECT item_id, dismissed_at FROM dismissed_resume WHERE user_id = ?').all(user.userId);
+          const dismissed = new Map(dismissals.map(row => [row.item_id, row.dismissed_at]));
+          const playedAt = item => Date.parse(item.UserData?.LastPlayedDate || '') || 0;
+          const upstream = (resume.Items || []).filter(item => !dismissed.has(item.Id) || playedAt(item) > dismissed.get(item.Id));
+          if (!recent.length) return json(res, 200, { Items: upstream, TotalRecordCount: upstream.length });
           const ids = recent.map(row => row.item_id).filter(Boolean);
           const supplements = ids.length ? await jellyfin(`/Users/${user.userId}/Items?${new URLSearchParams({
             Ids: ids.join(','), Recursive: 'true', IncludeItemTypes: 'Episode', Fields: fields, Limit: String(ids.length)
@@ -387,13 +435,18 @@ export function createAppServer(options = {}) {
           }) : { Items: [] };
           const items = new Map((supplements.Items || []).map(item => [item.Id, item]));
           const bySeries = new Map(recent.map(row => [row.series_id, row]));
-          const result = (resume.Items || []).filter(item => {
+          const newerShows = new Set(upstream.filter(item => {
             const row = item.Type === 'Episode' && bySeries.get(item.SeriesId);
-            return !row || (row.item_id && !items.has(row.item_id));
+            return row && playedAt(item) > row.played_at + 1500;
+          }).map(item => item.SeriesId));
+          const result = upstream.filter(item => {
+            const row = item.Type === 'Episode' && bySeries.get(item.SeriesId);
+            return !row || newerShows.has(item.SeriesId) || !items.has(row.item_id);
           });
           for (const row of recent) {
+            if (newerShows.has(row.series_id)) continue;
             const item = items.get(row.item_id);
-            if (!item || item.Type !== 'Episode' || item.SeriesId !== row.series_id) continue;
+            if (!item || item.Type !== 'Episode' || item.SeriesId !== row.series_id || dismissed.has(item.Id)) continue;
             const atEnd = item.RunTimeTicks > 0 && row.position_ticks >= item.RunTimeTicks - 10_000_000;
             result.push({ ...item, UserData: { ...item.UserData, LastPlayedDate: new Date(row.played_at).toISOString(),
               PlaybackPositionTicks: atEnd ? 0 : row.position_ticks,
@@ -491,7 +544,10 @@ export function createAppServer(options = {}) {
           // A zero resume position removes the item from Continue watching without marking it watched.
           await jellyfinEither([`/Users/${user.userId}/Items/${id}/UserData`, `/UserItems/${id}/UserData?userId=${encodeURIComponent(user.userId)}`],
             user, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ PlaybackPositionTicks: 0 }) });
-          db.prepare("UPDATE last_played_episode SET item_id = '', playback_id = '' WHERE user_id = ? AND item_id = ?").run(user.userId, id);
+          db.prepare('UPDATE last_played_episode SET played_at = ?, position_ticks = 0, playback_id = ? WHERE user_id = ? AND item_id = ?')
+            .run(now, '', user.userId, id);
+          db.prepare(`INSERT INTO dismissed_resume VALUES (?, ?, ?) ON CONFLICT(user_id,item_id)
+            DO UPDATE SET dismissed_at=excluded.dismissed_at`).run(user.userId, id, now);
           return json(res, 200, { ok: true });
         }
         if (pathname === '/api/playback' && req.method === 'POST') {
@@ -503,26 +559,40 @@ export function createAppServer(options = {}) {
           const ticks = Number.isFinite(rawTicks) ? Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.round(rawTicks))) : 0;
           const payload = { ItemId: data.itemId, PositionTicks: ticks, IsPaused: Boolean(data.isPaused),
             PlayMethod: data.method === 'DirectPlay' ? 'DirectPlay' : 'Transcode' };
-          await jellyfin(`/Sessions/Playing${data.event === 'Playing' ? '' : '/' + data.event}`, user,
-            { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
-          if (typeof data.playbackId === 'string' && /^[a-f0-9-]{36}$/i.test(data.playbackId)) {
-            if (data.event === 'Playing') {
-              const item = await jellyfin(`/Users/${user.userId}/Items/${data.itemId}`, user).catch(() => null);
-              if (item?.Type === 'Episode' && item.SeriesId && item.Id === data.itemId) {
-                db.prepare(`INSERT INTO last_played_episode VALUES (?, ?, ?, ?, ?, ?)
-                  ON CONFLICT(user_id, series_id) DO UPDATE SET item_id=excluded.item_id,
-                    playback_id=excluded.playback_id, played_at=excluded.played_at, position_ticks=excluded.position_ticks
-                  WHERE excluded.played_at >= last_played_episode.played_at`)
-                  .run(user.userId, item.SeriesId, item.Id, data.playbackId, now, ticks);
+          const playbackKey = typeof data.playbackId === 'string' && /^[a-f0-9-]{36}$/i.test(data.playbackId)
+            ? JSON.stringify([user.userId, data.itemId, data.playbackId]) : null;
+          const previous = playbackKey && playbackReports.get(playbackKey);
+          const work = async () => {
+            if (previous) await previous.catch(() => {});
+            await jellyfin(`/Sessions/Playing${data.event === 'Playing' ? '' : '/' + data.event}`, user,
+              { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+            if (playbackKey) {
+              if (data.event === 'Playing') {
+                db.prepare('DELETE FROM dismissed_resume WHERE user_id = ? AND item_id = ? AND dismissed_at <= ?').run(user.userId, data.itemId, now);
+                const item = await jellyfin(`/Users/${user.userId}/Items/${data.itemId}`, user).catch(() => null);
+                const dismissed = db.prepare('SELECT dismissed_at FROM dismissed_resume WHERE user_id = ? AND item_id = ?')
+                  .get(user.userId, data.itemId);
+                if (item?.Type === 'Episode' && item.SeriesId && item.Id === data.itemId && !dismissed) {
+                  db.prepare(`INSERT INTO last_played_episode VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(user_id, series_id) DO UPDATE SET item_id=excluded.item_id,
+                      playback_id=excluded.playback_id, played_at=excluded.played_at, position_ticks=excluded.position_ticks
+                    WHERE excluded.played_at >= last_played_episode.played_at`)
+                    .run(user.userId, item.SeriesId, item.Id, data.playbackId, now, ticks);
+                }
+              } else {
+                db.prepare('UPDATE last_played_episode SET position_ticks = ? WHERE user_id = ? AND item_id = ? AND playback_id = ?')
+                  .run(ticks, user.userId, data.itemId, data.playbackId);
               }
-            } else {
-              db.prepare('UPDATE last_played_episode SET position_ticks = ? WHERE user_id = ? AND item_id = ? AND playback_id = ?')
-                .run(ticks, user.userId, data.itemId, data.playbackId);
             }
-          }
+          };
+          const task = work();
+          if (playbackKey) playbackReports.set(playbackKey, task);
+          try { await task; }
+          finally { if (playbackKey && playbackReports.get(playbackKey) === task) playbackReports.delete(playbackKey); }
           return json(res, 200, { ok: true });
         }
         if (pathname === '/api/requests' && req.method === 'GET') {
+          await refreshIdentity(user);
           if (now - lastDownloadSync > 15_000) {
             lastDownloadSync = now;
             await requestsFlow.syncProgress().catch(() => {});
@@ -530,7 +600,7 @@ export function createAppServer(options = {}) {
           return json(res, 200, { requests: requestsFlow.listRows(user) });
         }
         if (pathname === '/api/requests' && req.method === 'POST') {
-          verifyMutation(req);
+          verifyMutation(req); await refreshIdentity(user);
           const data = await bodyJson(req);
           const title = String(data.title || '').trim();
           if (title.length < 2 || title.length > 180 || !['movie', 'series'].includes(data.kind)) failure('Valid movie/series title and type are required');
@@ -546,12 +616,12 @@ export function createAppServer(options = {}) {
         }
         const requestManage = pathname.match(/^\/api\/requests\/([\w-]+)$/);
         if (requestManage && req.method === 'DELETE') {
-          verifyMutation(req); requireAdmin(user);
+          verifyMutation(req); await requireAdmin(user);
           requestsFlow.deleteRequest(requestManage[1]);
           return json(res, 200, { ok: true });
         }
         if (requestManage && req.method === 'PATCH') {
-          verifyMutation(req); requireAdmin(user);
+          verifyMutation(req); await requireAdmin(user);
           const form = await bodyJson(req);
           if (!['approved', 'rejected', 'fulfilled', 'pending'].includes(form.status)) failure('Invalid status');
           const existing = db.prepare('SELECT * FROM requests WHERE id=?').get(requestManage[1]);
@@ -575,18 +645,18 @@ export function createAppServer(options = {}) {
         }
         const processApproved = pathname.match(/^\/api\/requests\/([\w-]+)\/process$/);
         if (processApproved && req.method === 'POST') {
-          verifyMutation(req); requireAdmin(user);
+          verifyMutation(req); await requireAdmin(user);
           const outcome = await requestsFlow.process(processApproved[1], user.userId);
           return json(res, 200, { state: outcome.state, detail: outcome.detail });
         }
         const optionsApproved = pathname.match(/^\/api\/requests\/([\w-]+)\/releases$/);
         if (optionsApproved && req.method === 'GET') {
-          requireAdmin(user);
+          await requireAdmin(user);
           return json(res, 200, await requestsFlow.options(optionsApproved[1], user.userId));
         }
         const selectedApproved = pathname.match(/^\/api\/requests\/([\w-]+)\/queue$/);
         if (selectedApproved && req.method === 'POST') {
-          verifyMutation(req); requireAdmin(user);
+          verifyMutation(req); await requireAdmin(user);
           const body = await bodyJson(req);
           if (!/^\d{1,12}$/.test(String(body.releaseId||''))) failure('Invalid FileList release');
           const outcome = await requestsFlow.select(selectedApproved[1], user.userId, String(body.releaseId));
@@ -599,17 +669,17 @@ export function createAppServer(options = {}) {
           return json(res, 200, await filelist.search(query, user.userId, category));
         }
         if (pathname === '/api/admin/filelist/settings' && req.method === 'GET') {
-          requireAdmin(user);
+          await requireAdmin(user);
           return json(res, 200, filelist.status());
         }
         if (pathname === '/api/admin/filelist/settings' && req.method === 'POST') {
-          verifyMutation(req); requireAdmin(user);
+          verifyMutation(req); await requireAdmin(user);
           const settings = await bodyJson(req);
           return json(res, 200, filelist.configure(settings));
         }
         const torrent = pathname.match(/^\/api\/admin\/filelist\/torrent\/(\d+)$/);
         if (torrent && req.method === 'GET') {
-          requireAdmin(user);
+          await requireAdmin(user);
           const body = await filelist.torrentFor(user.userId, torrent[1]);
           res.writeHead(200, { 'content-type': 'application/x-bittorrent',
             'content-disposition': 'attachment; filename="filelist-' + torrent[1] + '.torrent"',
@@ -619,12 +689,12 @@ export function createAppServer(options = {}) {
           return;
         }
         if (pathname === '/api/admin/downloads' && req.method === 'GET') {
-          requireAdmin(user);
+          await requireAdmin(user);
           return json(res, 200, await downloadManager.status());
         }
         const download = pathname.match(/^\/api\/admin\/downloads\/([\w-]+)$/);
         if (download && req.method === 'DELETE') {
-          verifyMutation(req); requireAdmin(user);
+          verifyMutation(req); await requireAdmin(user);
           const hash = download[1].toLowerCase();
           await downloadManager.deleteTorrent(hash);
           requestsFlow.markDownloadDeleted(hash);
@@ -632,12 +702,12 @@ export function createAppServer(options = {}) {
         }
         const queue = pathname.match(/^\/api\/admin\/filelist\/queue\/(\d+)$/);
         if (queue && req.method === 'POST') {
-          verifyMutation(req); requireAdmin(user);
+          verifyMutation(req); await requireAdmin(user);
           const body = await bodyJson(req);
           return json(res, 200, await filelist.queueTorrent(user.userId, queue[1], body.kind));
         }
         if (pathname === '/api/admin/subtitles/status' && req.method === 'GET') {
-          requireAdmin(user);
+          await requireAdmin(user);
           let snapshot = null;
           try {
             const file = path.resolve(ROOT, env.DATA_DIR || './data', 'romanian-subtitle-audit.json');
@@ -658,7 +728,7 @@ export function createAppServer(options = {}) {
           return json(res, 200, { enabled: Boolean(snapshot), summary: snapshot });
         }
         if (pathname === '/api/admin/status' && req.method === 'GET') {
-          requireAdmin(user);
+          await requireAdmin(user);
           let reachable = false;
           try { await jellyfin('/System/Info/Public', user); reachable = true; } catch {}
           return json(res, 200, { jellyfinReachable: reachable, filelistConfigured: filelist.status().apiConfigured || filelist.status().rssConfigured,
@@ -669,7 +739,7 @@ export function createAppServer(options = {}) {
       if (!staticAsset(req, res, pathname)) json(res, 404, { error: 'Build the web app with npm run build' });
     } catch (err) {
       if (res.headersSent) { res.destroy(); return; }
-      if (err.name === 'AbortError') return json(res, 504, { error: 'Upstream connection timed out' });
+      if (['AbortError','TimeoutError'].includes(err.name)) return json(res, 504, { error: 'Upstream connection timed out' });
       // No token, passkey, full upstream URL or internal path is ever returned to users.
       json(res, err.status || 502, { error: hideSecrets(err) });
     }

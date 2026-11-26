@@ -5,7 +5,7 @@ import { isTv } from './tv';
 import { buildHlsUrl } from './hls-url';
 import { ArrowLeft, Captions, Clapperboard, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Settings2, SkipForward, SlidersHorizontal, Volume2, VolumeX, X } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { api, itemArt, type PageResult } from './lib';
+import { api, itemArt, queryClient, statusOf, type PageResult } from './lib';
 import { languageKey, setPrefs, usePrefs } from './prefs';
 
 type StreamInfo = {
@@ -59,6 +59,8 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
   const exitDialogRef = useRef<HTMLDialogElement>(null);
   const [detail, setDetail] = useState<Details | null>(null);
   const [status, setStatus] = useState('');
+  const [canRetry, setCanRetry] = useState(false);
+  const [retry, setRetry] = useState(0);
   const [loading, setLoading] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const windowFullscreenRef = useRef(false);
@@ -86,13 +88,12 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
   useEffect(() => {
     const abort = new AbortController();
     setDetail(null);
-    fetch('/api/items/' + encodeURIComponent(item.Id), {
-      credentials: 'same-origin', signal: abort.signal,
-      headers: { accept: 'application/json' }
-    }).then(async response => {
-      if (!response.ok) throw new Error('Playback track information is unavailable.');
-      return response.json();
-    }).then((value: Details) => {
+    setLoading(true);
+    setStatus('');
+    setCanRetry(false);
+    api<Details>('/api/items/' + encodeURIComponent(item.Id), {
+      signal: AbortSignal.any([abort.signal, AbortSignal.timeout(20_000)])
+    }).then(value => {
       if (abort.signal.aborted) return;
       setDetail(value);
       if (!value.MediaSources?.[0]?.Id) {
@@ -102,11 +103,13 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
     }).catch(err => {
       if (!abort.signal.aborted) {
         setLoading(false);
+        if (statusOf(err) === 401) void queryClient.invalidateQueries({ queryKey: ['me'] });
+        setCanRetry(statusOf(err) !== 401);
         setStatus(err instanceof Error ? err.message : 'Unable to load media tracks');
       }
     });
     return () => abort.abort();
-  }, [item.Id]);
+  }, [item.Id, retry]);
 
   const source = detail?.MediaSources?.[0];
   const streams = source?.MediaStreams || [];
@@ -304,35 +307,48 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
     if (!video) return;
     let hls: Hls | null = null;
     let started = false;
+    let stopped = false;
     const playbackId = crypto.randomUUID();
     let disposed = false;
     const uri = buildHlsUrl(item.Id, source.Id, quality, audioChoice);
+    let playbackReport = Promise.resolve();
 
     function report(event: 'Playing' | 'Progress' | 'Stopped') {
-      if (!started && event !== 'Playing') return;
-      fetch('/api/playback', {
-        method: 'POST', credentials: 'same-origin', keepalive: event === 'Stopped',
+      if ((!started && event !== 'Playing') || stopped) return;
+      if (event === 'Stopped') stopped = true;
+      const init = {
+        method: 'POST', credentials: 'same-origin' as const, keepalive: event === 'Stopped',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           itemId: item.Id, playbackId, positionTicks: Math.round((video!.currentTime || 0) * 10_000_000),
           isPaused: video!.paused, event, method: 'Transcode'
         })
+      };
+      playbackReport = playbackReport.then(async () => {
+        const response = await fetch('/api/playback', { ...init, signal: AbortSignal.timeout(12_000) });
+        if (response.status === 401) void queryClient.invalidateQueries({ queryKey: ['me'] });
+        if (event === 'Stopped' && response.ok) void queryClient.invalidateQueries({ queryKey: ['resume'] });
       }).catch(() => {});
     }
     const onPlaying = () => {
-      const firstPlay = !started;
+      const firstPlay = !started || stopped;
+      stopped = false;
       started = true;
       setEnded(false);
+      clearTimeout(startupTimeout);
       setPlaying(true);
       setLoading(false);
       setStatus('');
+      setCanRetry(false);
       report(firstPlay ? 'Playing' : 'Progress');
     };
     const onPaused = () => { setPlaying(false); report('Progress'); };
-    const showPlaybackError = (message: string) => {
+    const showPlaybackError = (message: string, retryable = true) => {
       setLoading(false);
       setStatus(message);
+      setCanRetry(retryable);
     };
+    const startupTimeout = setTimeout(() => showPlaybackError('The stream is taking too long to load. Retry or try a lower quality.'), 45_000);
     const onError = () => showPlaybackError('Unable to play this stream. Try a lower quality.');
     const onTime = () => {
       if (Number.isFinite(video.currentTime)) setClock(Math.floor(video.currentTime));
@@ -346,6 +362,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
       }
     };
     const startPlayback = () => {
+      clearTimeout(startupTimeout);
       setLoading(false);
       restorePosition();
       if (resumePlayingRef.current) video.play().catch(err => {
@@ -365,17 +382,24 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
     setPlaying(false);
     setLoading(true);
     setStatus('');
+    setCanRetry(false);
 
     if (Hls.isSupported()) {
       hls = new Hls({ enableWorker: true, backBufferLength: 30, maxBufferLength: 45, lowLatencyMode: false });
       hls.on(Hls.Events.ERROR, (_event, info) => {
-        if (!disposed && info.fatal) showPlaybackError(`Stream error (${info.type}). ${info.details || 'Could not load video.'}`);
+        if (disposed) return;
+        if (info.response?.code === 401) {
+          showPlaybackError('Your session expired. Sign in again.', false);
+          void queryClient.invalidateQueries({ queryKey: ['me'] });
+        } else if (info.fatal) {
+          showPlaybackError('The stream stopped loading. Retry or try a lower quality.');
+        }
       });
       hls.attachMedia(video);
       hls.on(Hls.Events.MEDIA_ATTACHED, () => hls?.loadSource(uri));
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = uri;
-    } else showPlaybackError('HLS playback is unavailable in this browser.');
+    } else showPlaybackError('HLS playback is unavailable in this browser.', false);
 
     const progress = setInterval(() => report('Progress'), 15_000);
     return () => {
@@ -384,6 +408,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
       resumePlayingRef.current = !video.paused;
       if (started) report('Stopped');
       clearInterval(progress);
+      clearTimeout(startupTimeout);
       for (const [event, handler] of [
         ['playing', onPlaying], ['pause', onPaused], ['error', onError],
         ['timeupdate', onTime], ['loadedmetadata', restorePosition],
@@ -394,7 +419,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
       video.removeAttribute('src');
       video.load();
     };
-  }, [item.Id, source?.Id, quality, audioChoice]);
+  }, [item.Id, source?.Id, quality, audioChoice, retry]);
 
   // Shift browser-rendered WebVTT cues without transcoding the video or
   // changing the saved subtitle file. Negative = show subtitle earlier.
@@ -536,7 +561,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
           label={selectedSubtitle.DisplayTitle || languageLabel(selectedSubtitle.Language)} />}
       </video>
       {(status || loading) && <div className="player-message" role="status">
-        {status ? <><Clapperboard aria-hidden/><span>{status}</span></> : <span className="spinner" aria-label="Preparing video"/>}
+        {status ? <><Clapperboard aria-hidden/><span>{status}</span>{canRetry && <button className="btn" onClick={() => { resumePlayingRef.current = true; setRetry(value => value + 1); }}>Retry</button>}</> : <span className="spinner" aria-label="Preparing video"/>}
       </div>}
 
       <header className="player-top">

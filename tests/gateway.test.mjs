@@ -9,19 +9,27 @@ const earlier = { Id: 'b'.repeat(32), Type: 'Episode', SeriesId: 'a'.repeat(32),
 const later = { ...earlier, Id: 'c'.repeat(32), IndexNumber: 17, Name: 'Later' };
 const userData = [];
 const itemQueries = [];
-function upstream(isRevoked = () => false) {
+function upstream(isRevoked = () => false, policy = name => name === 'admin', resumeItems = () => [later]) {
+  const loginNames = new Map();
   return http.createServer(async (req, res) => {
     const p = new URL(req.url, 'http://localhost');
     if (p.pathname === '/Users/AuthenticateByName') {
       let body = ''; for await (const chunk of req) body += chunk;
       const data = JSON.parse(body);
       if (data.Pw !== 'testpass') { res.writeHead(401); res.end(); return; }
+      loginNames.set(req.headers.authorization?.match(/DeviceId="([^"]+)"/)?.[1], data.Username);
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({ AccessToken: 'jellyfin-private-token-123', User: {
         Id: VIDEO, Name: data.Username, Policy: { IsAdministrator: data.Username === 'admin' }
       } })); return;
     }
     if (isRevoked() || !req.headers.authorization?.includes('Token="jellyfin-private-token-123"')) { res.writeHead(401); res.end(); return; }
+    if (p.pathname === '/Users/Me') {
+      const name = loginNames.get(req.headers.authorization?.match(/DeviceId="([^"]+)"/)?.[1]);
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ Id: VIDEO, Name: name, Policy: { IsAdministrator: policy(name) } }));
+      return;
+    }
     if (p.pathname.includes('/Subtitles/') && p.pathname.endsWith('/Stream.vtt')) { res.setHeader('content-type', 'text/vtt'); res.end('WEBVTT\n\n00:00:01.000 --> 00:00:02.500\nSalut!'); return; }
     if (p.pathname.includes('master.m3u8')) { res.setHeader('content-type', 'application/vnd.apple.mpegurl'); res.end(`#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=450000\n/Videos/${VIDEO}/hls1/main/0.ts?ApiKey=jellyfin-private-token-123\n`); return; }
     if (p.pathname.includes('/hls1/main/0.ts') || p.pathname.includes('/stream')) {
@@ -47,7 +55,7 @@ function upstream(isRevoked = () => false) {
       { Type: 'Intro', StartTicks: 12e7, EndTicks: 92e7 }, { Type: 'Outro', StartTicks: 2500e7, EndTicks: 2600e7 }] })); return; }
     if (p.pathname.startsWith('/MediaSegments/') || p.pathname.includes('/IntroSkipperSegments')) { res.writeHead(404); res.end(); return; }
     if (p.pathname === '/Genres') { res.end(JSON.stringify({ Items: [{ Name: 'Drama' }, { Name: 'Comedie' }] })); return; }
-    if (p.pathname.endsWith('/Items/Resume')) { res.end(JSON.stringify({ Items: [later], TotalRecordCount: 1 })); return; }
+    if (p.pathname.endsWith('/Items/Resume')) { res.end(JSON.stringify({ Items: resumeItems(), TotalRecordCount: 1 })); return; }
     if (p.pathname.endsWith('/Items') && p.searchParams.has('Ids')) {
       const ids = p.searchParams.get('Ids').split(',');
       res.end(JSON.stringify({ Items: [earlier, later].filter(i => ids.includes(i.Id)) })); return;
@@ -61,8 +69,8 @@ function upstream(isRevoked = () => false) {
 async function begin(server) { server.listen(0, '127.0.0.1'); await once(server, 'listening'); return `http://127.0.0.1:${server.address().port}`; }
 function end(server) { return new Promise(resolve => server.close(resolve)); }
 
-async function fixture(t, isRevoked) {
-  const jf = upstream(isRevoked); const jellyfinUrl = await begin(jf);
+async function fixture(t, isRevoked, policy, resumeItems) {
+  const jf = upstream(isRevoked, policy, resumeItems); const jellyfinUrl = await begin(jf);
   const gateway = createAppServer({ dbPath: ':memory:', env: { JELLYFIN_URL: jellyfinUrl, NODE_ENV: 'development', SESSION_ENCRYPTION_KEY: Buffer.alloc(32, 5).toString('base64') } });
   const url = await begin(gateway.server);
   t.after(async () => { await end(gateway.server); await end(jf); gateway.db.close(); });
@@ -280,4 +288,30 @@ test('replaying an earlier episode replaces the later one and stale stop reports
   // Remove from Continue Watching must not revive the previous episode from the same show.
   assert.equal((await request('/api/items/' + earlier.Id + '/progress', session, { method: 'DELETE' })).status, 200);
   assert.deepEqual(await resume(session), []);
+});
+
+test('an existing session reflects the current Jellyfin administrator policy', async t => {
+  let admin = true;
+  const { request, login } = await fixture(t, undefined, () => admin);
+  const cookie = await login('admin');
+  assert.equal((await request('/api/admin/status', cookie)).status, 200);
+  admin = false;
+  const response = await request('/api/auth/me', cookie);
+  assert.equal((await response.json()).user.isAdmin, false);
+  assert.equal((await request('/api/admin/status', cookie)).status, 403);
+});
+
+test('a newer Jellyfin watch session can bring a dismissed show back', async t => {
+  let entries = [later];
+  const { request, login } = await fixture(t, undefined, undefined, () => entries);
+  const cookie = await login();
+  await request('/api/playback', cookie, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ itemId: earlier.Id, playbackId: VIDEO, event: 'Playing', positionTicks: 12345 })
+  });
+  await request('/api/items/' + earlier.Id + '/progress', cookie, { method: 'DELETE' });
+  const list = async () => (await (await request('/api/continue', cookie)).json()).Items;
+  assert.deepEqual(await list(), []);
+  entries = [{ ...later, UserData: { LastPlayedDate: new Date(Date.now() + 2_000).toISOString() } }];
+  assert.deepEqual((await list()).map(item => item.Id), [later.Id]);
 });

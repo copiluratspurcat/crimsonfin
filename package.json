@@ -1,6 +1,6 @@
 {
   "name": "crimsonfin-client",
-  "version": "2.5.16",
+  "version": "2.5.17",
   "private": true,
   "main": "desktop/main.cjs",
   "description": "Custom Jellyfin client, secure gateway and FileList-backed media requests",
@@ -28,15 +28,16 @@
     "hls.js": "^1.6.0",
     "lucide-react": "^0.468.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "semver": "^7.8.6"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^4.7.0",
-    "electron": "^35.0.0",
-    "electron-builder": "^26.0.0",
+    "electron": "^45.5.0",
+    "electron-builder": "^26.18.0",
     "puppeteer-core": "^24.43.1",
     "typescript": "^5.8.0",
     "vite": "^6.3.0"

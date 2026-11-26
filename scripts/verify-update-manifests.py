@@ -6,8 +6,10 @@ import sys
 from pathlib import Path
 
 
-def verify(directory, manifest, extension):
+def verify(directory, manifest, extension, version):
     content = (directory / manifest).read_text(encoding="utf-8")
+    if not re.search(rf"^version: {re.escape(version)}$", content, re.MULTILINE):
+        raise SystemExit(f"{manifest} version does not match {version}")
     for field in ("path", "sha512"):
         match = re.search(rf"^{field}: ([^\r\n]+)$", content, re.MULTILINE)
         if not match:
@@ -34,5 +36,5 @@ def verify(directory, manifest, extension):
 
 if __name__ == "__main__":
     root = Path(sys.argv[1])
-    verify(root, "latest.yml", ".exe")
-    verify(root, "latest-linux.yml", ".AppImage")
+    verify(root, "latest.yml", ".exe", sys.argv[2])
+    verify(root, "latest-linux.yml", ".AppImage", sys.argv[2])

@@ -23,16 +23,17 @@ export function AdminSection() {
   const mutate = useMutation({
     mutationFn: (arg: { id: string; status: string; kind?: 'movie' | 'series' }) => api<{ ok: boolean }>(`/api/requests/${arg.id}`, {
       method: 'PATCH', body: JSON.stringify({ status: arg.status, ...(arg.kind ? { kind: arg.kind } : {}) }), signal: AbortSignal.timeout(50000) }),
-    onSuccess: refresh
+    onSettled: refresh
   });
   const retry = useMutation({
     mutationFn: (id: string) => api('/api/requests/' + encodeURIComponent(id) + '/process', { method: 'POST', body: JSON.stringify({}), signal: AbortSignal.timeout(50000) }),
-    onSuccess: refresh
+    onSettled: refresh
   });
   const queue = useMutation({
     mutationFn: (arg: { id: string; releaseId: string }) => api('/api/requests/' + encodeURIComponent(arg.id) + '/queue', {
       method: 'POST', body: JSON.stringify({ releaseId: arg.releaseId }), signal: AbortSignal.timeout(50000) }),
-    onSuccess: () => { setSelectionId(null); refresh(); }
+    onSuccess: () => setSelectionId(null),
+    onSettled: refresh
   });
   const dialog = useRef<HTMLDialogElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
