@@ -1,5 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
-import { Film, HardDrive, RefreshCw, Tv2 } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Film, HardDrive, RefreshCw, Trash2, Tv2 } from 'lucide-react';
+import { api } from './lib';
 import { Empty, StatusDot } from './ui';
 
 type Drive = { id: string; name: string; totalBytes: number; freeBytes: number; movieFolder: string | null; seriesFolder: string | null };
@@ -27,6 +29,29 @@ async function getDownloads(): Promise<Result> {
 
 export function DownloadsSection() {
   const query = useQuery({ queryKey: ['downloadManager'], queryFn: getDownloads, refetchInterval: 3500, retry: 1, staleTime: 1000 });
+  const qc = useQueryClient();
+  const dialog = useRef<HTMLDialogElement>(null);
+  const cancelButton = useRef<HTMLButtonElement>(null);
+  const [target, setTarget] = useState<Transfer | null>(null);
+  const [notice, setNotice] = useState('');
+  const remove = useMutation({
+    mutationFn: (torrent: Transfer) => api(`/api/admin/downloads/${encodeURIComponent(torrent.hash)}`, { method: 'DELETE' }),
+    onSuccess: (_, torrent) => {
+      dialog.current?.close();
+      setNotice(`Deletion requested for “${torrent.name}”.`);
+      void query.refetch();
+      void qc.invalidateQueries({ queryKey: ['requests'] });
+    },
+    onError: () => { void query.refetch(); }
+  });
+
+  function confirmRemoval(torrent: Transfer) {
+    remove.reset();
+    setNotice('');
+    setTarget(torrent);
+    dialog.current?.showModal();
+    cancelButton.current?.focus();
+  }
   const data = query.data;
   const mostFree = data?.drives.length ? data.drives.reduce((a, b) => (b.freeBytes > a.freeBytes ? b : a)).id : '';
   return <div className="settings-content">
@@ -48,7 +73,8 @@ export function DownloadsSection() {
     })}</div>
     {!data && <Empty>Checking available storage…</Empty>}
     <p className="muted">New downloads go straight into the Movies or Shows folder on the drive with the most free space. Space for unfinished downloads is reserved.</p>
-    <h2 className="section-title">In progress</h2>
+    <h2 className="section-title">Torrents</h2>
+    {notice && <p role="status">{notice}</p>}
     {data?.downloads.length ? <ul className="list">{data.downloads.map((x, i) => <li className="transfer" key={x.hash || i}>
       <div className="transfer-head">
         <span className="list-text"><strong title={x.name}>{x.name}</strong><small>{statuses[x.state] || x.state} · {x.drive} · {x.folder}</small></span>
@@ -57,8 +83,25 @@ export function DownloadsSection() {
         <strong className="transfer-pct">{Math.floor(x.progress)}%</strong>
       </div>
       <span className="meter" role="progressbar" aria-label={`${x.name} progress`} aria-valuenow={x.progress} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${x.progress}%` }} /></span>
-      <small className="muted">{pretty(x.downloadedBytes)} of {pretty(x.sizeBytes)} · ↑ {pretty(x.uploadSpeedBytes)}/s</small>
+      <div className="transfer-actions">
+        <small className="muted">{pretty(x.downloadedBytes)} of {pretty(x.sizeBytes)} · ↑ {pretty(x.uploadSpeedBytes)}/s</small>
+        {x.hash && <button type="button" className="btn small delete-torrent" aria-label={`Delete ${x.name} and its files`}
+          onClick={() => confirmRemoval(x)}><Trash2 aria-hidden /> Delete torrent</button>}
+      </div>
     </li>)}</ul> : <Empty>{query.isPending ? 'Loading…' : data?.online
-      ? 'No active downloads. Search FileList on the Requests page and choose “Download on server”.' : 'qBittorrent is unavailable. Check its service on the server.'}</Empty>}
+      ? 'No torrents in the download folders. Search FileList on the Requests page and choose “Download on server”.' : 'qBittorrent is unavailable. Check its service on the server.'}</Empty>}
+    <dialog ref={dialog} className="dialog" aria-labelledby="delete-torrent-title" aria-describedby="delete-torrent-warning"
+      onCancel={event => { if (remove.isPending) event.preventDefault(); }}
+      onClose={() => setTarget(null)}>
+      <h2 id="delete-torrent-title">Delete torrent and files?</h2>
+      <p id="delete-torrent-warning"><strong>{target?.name}</strong> will be removed from qBittorrent and its downloaded files will be deleted from the server.</p>
+      {remove.error && <p className="error" role="alert">{remove.error.message}</p>}
+      <div className="actions">
+        <button type="button" className="btn" ref={cancelButton} disabled={remove.isPending} onClick={() => dialog.current?.close()}>Cancel</button>
+        <button type="button" className="btn destructive" disabled={!target || remove.isPending} onClick={() => target && remove.mutate(target)}>
+          {remove.isPending ? 'Deleting…' : 'Delete torrent and files'}
+        </button>
+      </div>
+    </dialog>
   </div>;
 }

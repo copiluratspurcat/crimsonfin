@@ -12,6 +12,13 @@ the server updater tracks the latest stable GitHub Release. Verify the published
 tag and update assets, the deployed gateway version, and the public health
 endpoint before reporting success.
 
+## Release 2.5.12
+
+Admins can delete a torrent and its downloaded files from Downloads. A
+confirmation names the selected release. The gateway validates its hash and
+download location and asks qBittorrent to remove it with its files. Linked
+download requests remain in history and can be retried.
+
 ## Release 2.5.11
 
 English displays Jellyfin's localized name when a TMDB translation is unavailable.

@@ -12,6 +12,7 @@ const DEFAULT_FOLDERS = {
 };
 const invalid = (message, status = 400) => Object.assign(new Error(message), { status });
 const num = x => Number.isFinite(Number(x)) ? Math.max(0, Number(x)) : 0;
+const torrentHash = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 const clamp = (x, max) => Math.min(max, num(x));
 
 export function parseTorrentSizeBytes(value) {
@@ -162,7 +163,7 @@ export function createDownloadManager({
       const drive = driveForSavePath(t.save_path, drives);
       if (!drive) return null;
       return {
-        hash: /^[0-9a-f]{40,64}$/i.test(String(t.hash)) ? t.hash : '',
+        hash: torrentHash.test(String(t.hash)) ? t.hash : '',
         name: String(t.name || 'Download').slice(0, 230),
         state: String(t.state || 'unknown').slice(0, 40),
         progress: clamp(Math.round(num(t.progress) * 10000) / 100, 100),
@@ -187,6 +188,25 @@ export function createDownloadManager({
       return { online: false, drives, downloads: [], active: 0,
         error: err.status === 503 ? 'qBittorrent is not configured' : 'qBittorrent is currently unavailable' };
     }
+  }
+  async function deleteTorrent(hash) {
+    if (typeof hash !== 'string' || !torrentHash.test(hash)) throw invalid('Invalid torrent hash', 400);
+    const res = await api('/api/v2/torrents/info?' + new URLSearchParams({ hashes: hash }));
+    const items = await res.json();
+    if (!Array.isArray(items)) throw invalid('Invalid qBittorrent status response', 502);
+    const torrent = items.find(item => String(item?.hash).toLowerCase() === hash.toLowerCase());
+    if (!torrent) throw invalid('This torrent is no longer in qBittorrent. Refresh Downloads.', 404);
+    const savePath = torrent.save_path;
+    const contentPath = torrent.content_path;
+    const drive = path.isAbsolute(String(savePath || '')) && driveForSavePath(savePath, storageProvider(env));
+    if (!drive || (contentPath && (typeof contentPath !== 'string' || !path.isAbsolute(contentPath) ||
+      !allowedChild(path.resolve(savePath), path.resolve(contentPath))))) {
+      throw invalid('This torrent is outside CrimsonFin’s download folders.', 409);
+    }
+    await api('/api/v2/torrents/delete', {
+      method: 'POST',
+      body: new URLSearchParams({ hashes: hash, deleteFiles: 'true' })
+    });
   }
   async function queueTorrentFile(torrent, kind, sizeBytes = 0, releaseName = '') {
     if (!Buffer.isBuffer(torrent) || torrent.length < 10 || torrent.length > 5_000_000 || torrent[0] !== 0x64) {
@@ -230,5 +250,5 @@ export function createDownloadManager({
       classifiedAsShow: classification.detectedSeries,
       drive: selected.drive, folder: savePath, availableBytes: selected.availableBytes };
   }
-  return { status, downloads, queueTorrentFile, listRaw };
+  return { status, downloads, queueTorrentFile, deleteTorrent, listRaw };
 }

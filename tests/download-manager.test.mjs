@@ -86,3 +86,36 @@ test('qBittorrent endpoint is restricted to loopback',()=>{
   assert.throws(()=>createDownloadManager({env:{QBIT_URL:'http://192.168.1.10:8080'}}),/loopback/);
   assert.throws(()=>createDownloadManager({env:{QBIT_URL:'https://evil.test:8080'}}),/loopback/);
 });
+
+test('delete sends one exact hash and only deletes torrents within the download folders', async () => {
+  const hash = 'a'.repeat(40);
+  const calls = [];
+  let savePath = '/mnt/ADATA/Shows/Test Show/Season 01';
+  let contentPath = savePath + '/episode.mkv';
+  let found = true;
+  const client = createDownloadManager({
+    env: { QBIT_USERNAME: 'test', QBIT_PASSWORD: 'test' },
+    storageProvider: () => drives,
+    fetchImpl: async (url, init) => {
+      if (url.pathname.endsWith('/auth/login')) return new Response('Ok.', { headers: { 'set-cookie': 'SID=test' } });
+      if (url.pathname.endsWith('/torrents/info')) {
+        assert.equal(url.searchParams.get('hashes'), hash);
+        return Response.json(found ? [{ hash, save_path: savePath, content_path: contentPath }] : []);
+      }
+      assert.equal(url.pathname, '/api/v2/torrents/delete');
+      assert.equal(init.method, 'POST');
+      calls.push(Object.fromEntries(init.body));
+      return new Response('');
+    }
+  });
+  await assert.rejects(client.deleteTorrent('all'), { status: 400 });
+  await assert.rejects(client.deleteTorrent(hash + '|' + hash), { status: 400 });
+  await client.deleteTorrent(hash);
+  contentPath = '/mnt/ADATA/Shows/Other Show/episode.mkv';
+  await assert.rejects(client.deleteTorrent(hash), { status: 409 });
+  savePath = '/tmp/downloads';
+  await assert.rejects(client.deleteTorrent(hash), { status: 409 });
+  found = false;
+  await assert.rejects(client.deleteTorrent(hash), { status: 404 });
+  assert.deepEqual(calls, [{ hashes: hash, deleteFiles: 'true' }]);
+});

@@ -146,6 +146,7 @@ export function createRequestFulfillment({db,filelist,downloadManager}){
     const complete=jobs.length<500;
     for(const row of rows){
       const t=byHash.get(row.torrent_hash.toLowerCase());
+      if (get(row.request_id)?.torrent_hash !== row.torrent_hash) continue;
       if(t){const state=Number(t.progress)>=1?'completed':'downloading';
         if(row.state!==state)save(row.request_id,{state});
       } else if(complete&&stamp()-row.updated_at>120_000){
@@ -153,11 +154,16 @@ export function createRequestFulfillment({db,filelist,downloadManager}){
       }
     }
   }
+  function markDownloadDeleted(hash) {
+    db.prepare(`UPDATE request_jobs SET state = 'failed', torrent_hash = '', detail = ?, updated_at = ?
+      WHERE lower(torrent_hash) = ? AND state IN ('queued','downloading','completed')`)
+      .run('An administrator deleted this download and requested removal of its files. Retry or choose another release.', stamp(), hash);
+  }
   function listRows(user){
     const rows=user.isAdmin?
       db.prepare("SELECT r.*, j.state AS download_state,j.release_name,j.drive,j.destination,j.detail AS download_detail FROM requests r LEFT JOIN request_jobs j ON j.request_id=r.id ORDER BY r.created_at DESC LIMIT 300").all():
       db.prepare("SELECT r.*, j.state AS download_state,j.release_name,j.drive,j.destination,j.detail AS download_detail FROM requests r LEFT JOIN request_jobs j ON j.request_id=r.id WHERE r.user_id=? ORDER BY r.created_at DESC LIMIT 200").all(user.userId);
     return rows.map(row=>({...row,user_id:undefined}));
   }
-  return { process, options, select, syncProgress, listRows, get, save };
+  return { process, options, select, syncProgress, markDownloadDeleted, listRows, get, save };
 }
