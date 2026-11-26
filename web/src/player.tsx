@@ -238,12 +238,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
     return () => { abort.abort(); clearTimeout(timer); };
   }, [syncUrl]);
 
-  function savePosition() {
-    const v = videoRef.current;
-    if (!v) return;
-    if (Number.isFinite(v.currentTime) && v.currentTime >= 0) resumeRef.current = v.currentTime;
-    resumePlayingRef.current = !v.paused;
-  }
+
   function jump(seconds: number) {
     const v = videoRef.current;
     if (!v) return;
@@ -257,7 +252,6 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
   // Always use compatible HLS for Jellyfin's MKV, DTS and E-AC-3 sources.
   // Direct-playing those files in Chromium can silently remove audio.
   function chooseAudio(value: string) {
-    savePosition();
     setAudioChoice(value);
   }
 
@@ -652,7 +646,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
           </select></label>
         {subtitleUnavailable && <p className="muted" role="status">Could not load the subtitles. Choose another track or use the subtitle button to retry.</p>}
         <label className="field"><span><SlidersHorizontal aria-hidden/> Quality</span>
-          <select value={quality} onChange={e => { savePosition(); setQuality(Number(e.target.value)); }}>
+          <select value={quality} onChange={e => setQuality(Number(e.target.value))}>
             <option value={4_000_000}>4 Mbps · Data saver</option>
             <option value={8_000_000}>8 Mbps · HD</option>
             <option value={12_000_000}>12 Mbps · Full HD</option>
