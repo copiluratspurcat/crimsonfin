@@ -24,17 +24,20 @@ export function createTitleTranslations(token, fetchImpl) {
     entry.result = new Promise(resolve => {
       waiting.push(async () => {
         try {
-          const response = await fetchImpl(`https://api.themoviedb.org/3/${key}/translations`, {
+          const response = await fetchImpl(`https://api.themoviedb.org/3/${key}?language=en-US&append_to_response=translations`, {
             headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
             redirect: 'error', signal: AbortSignal.timeout(4000)
           });
           if (!response.ok) throw new Error('TMDB translation request failed');
-          const { translations } = await response.json();
+          const details = await response.json();
+          const rows = details.translations?.translations ?? [];
           const result = {};
           for (const [language, country] of [['en', 'US'], ['ro', 'RO']]) {
-            const matches = (translations || []).filter(row => row.iso_639_1 === language);
+            const matches = rows.filter(row => row.iso_639_1 === language);
             const name = row => row?.data?.[kind === 'movie' ? 'title' : 'name']?.trim();
-            const value = name(matches.find(row => row.iso_3166_1 === country)) || matches.map(name).find(Boolean);
+            const original = language === details.original_language
+              ? details[kind === 'movie' ? 'original_title' : 'original_name']?.trim() : undefined;
+            const value = name(matches.find(row => row.iso_3166_1 === country)) || matches.map(name).find(Boolean) || original;
             if (value) result[language] = value;
           }
           entry.expires = Date.now() + 24 * 60 * 60_000;
