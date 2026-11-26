@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Film, HardDrive, RefreshCw, Trash2, Tv2 } from 'lucide-react';
-import { api } from './lib';
+import { requestDeadline, api } from './lib';
 import { Empty, StatusDot } from './ui';
 
 type Drive = { id: string; name: string; totalBytes: number; freeBytes: number; movieFolder: string | null; seriesFolder: string | null };
@@ -22,7 +22,7 @@ const statuses: Record<string, string> = {
   error: 'Error', missingFiles: 'Files missing', allocating: 'Preparing storage'
 };
 async function getDownloads(): Promise<Result> {
-  const response = await fetch('/api/admin/downloads', { credentials: 'same-origin', signal: AbortSignal.timeout(12000) });
+  const response = await fetch('/api/admin/downloads', { credentials: 'same-origin', signal: requestDeadline(12000) });
   if (!response.ok) throw new Error('Cannot retrieve downloader status');
   return response.json();
 }

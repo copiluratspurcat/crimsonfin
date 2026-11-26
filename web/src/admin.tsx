@@ -3,7 +3,7 @@ import { bestSeedCount } from './filelist-presentation';
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw, Search, ShieldCheck, Trash2 } from 'lucide-react';
-import { api, type Release, type RequestEntry } from './lib';
+import { requestDeadline, api, type Release, type RequestEntry } from './lib';
 import { Empty, StatusDot } from './ui';
 import { downloadStatusLabel } from './requests';
 
@@ -22,16 +22,16 @@ export function AdminSection() {
   };
   const mutate = useMutation({
     mutationFn: (arg: { id: string; status: string; kind?: 'movie' | 'series' }) => api<{ ok: boolean }>(`/api/requests/${arg.id}`, {
-      method: 'PATCH', body: JSON.stringify({ status: arg.status, ...(arg.kind ? { kind: arg.kind } : {}) }), signal: AbortSignal.timeout(50000) }),
+      method: 'PATCH', body: JSON.stringify({ status: arg.status, ...(arg.kind ? { kind: arg.kind } : {}) }), signal: requestDeadline(50000) }),
     onSettled: refresh
   });
   const retry = useMutation({
-    mutationFn: (id: string) => api('/api/requests/' + encodeURIComponent(id) + '/process', { method: 'POST', body: JSON.stringify({}), signal: AbortSignal.timeout(50000) }),
+    mutationFn: (id: string) => api('/api/requests/' + encodeURIComponent(id) + '/process', { method: 'POST', body: JSON.stringify({}), signal: requestDeadline(50000) }),
     onSettled: refresh
   });
   const queue = useMutation({
     mutationFn: (arg: { id: string; releaseId: string }) => api('/api/requests/' + encodeURIComponent(arg.id) + '/queue', {
-      method: 'POST', body: JSON.stringify({ releaseId: arg.releaseId }), signal: AbortSignal.timeout(50000) }),
+      method: 'POST', body: JSON.stringify({ releaseId: arg.releaseId }), signal: requestDeadline(50000) }),
     onSuccess: () => setSelectionId(null),
     onSettled: refresh
   });
@@ -143,7 +143,7 @@ function FileListConfiguration() {
   const [username, setUsername] = useState(''); const [passkey, setPasskey] = useState(''); const [dirty, setDirty] = useState(false);
   useEffect(() => { if (settings.data && !dirty) setUsername(settings.data.username || ''); }, [settings.data, dirty]);
   const save = useMutation({
-    mutationFn: () => api('/api/admin/filelist/settings', { method: 'POST', signal: AbortSignal.timeout(10000),
+    mutationFn: () => api('/api/admin/filelist/settings', { method: 'POST', signal: requestDeadline(10000),
       body: JSON.stringify({ username, ...(passkey.trim() ? { passkey: passkey.trim() } : {}) }) }),
     onSuccess: () => {
       setPasskey(''); setDirty(false);

@@ -437,7 +437,7 @@ export function createAppServer(options = {}) {
           const bySeries = new Map(recent.map(row => [row.series_id, row]));
           const newerShows = new Set(upstream.filter(item => {
             const row = item.Type === 'Episode' && bySeries.get(item.SeriesId);
-            return row && playedAt(item) > row.played_at + 1500;
+            return row && playedAt(item) > row.played_at;
           }).map(item => item.SeriesId));
           const result = upstream.filter(item => {
             const row = item.Type === 'Episode' && bySeries.get(item.SeriesId);
