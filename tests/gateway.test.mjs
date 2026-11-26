@@ -219,3 +219,16 @@ test('library sort and filter ignore inherited object keys', async t => {
   await request('/api/library?sort=year', cookie);
   assert.equal(itemQueries.at(-1).get('SortOrder'), 'Descending,Ascending');
 });
+
+test('torrent deletion requires admin permissions, a trusted origin and a valid hash', async t => {
+  const { request, login } = await fixture(t);
+  const endpoint = '/api/admin/downloads/' + 'a'.repeat(40);
+  assert.equal((await request(endpoint, null, { method: 'DELETE' })).status, 401);
+  const member = await login();
+  assert.equal((await request(endpoint, member, { method: 'DELETE' })).status, 403);
+  const admin = await login('admin');
+  assert.equal((await request(endpoint, admin, {
+    method: 'DELETE', headers: { origin: 'https://untrusted.example' }
+  })).status, 403);
+  assert.equal((await request('/api/admin/downloads/all', admin, { method: 'DELETE' })).status, 400);
+});

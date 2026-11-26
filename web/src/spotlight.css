@@ -606,3 +606,8 @@ html:has(.player) { overflow: hidden; }
 .title-language[aria-checked="true"] span:last-child { background: var(--text); color: var(--bg); }
 .crimsonfin-tv .title-language { font-size: max(13px, calc(18 * var(--u))); }
 .spotlight-info h1, .details-info h1 { overflow-wrap: anywhere; }
+
+.transfer-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.delete-torrent { color: var(--red); }
+.btn.destructive { background: #b91e37; color: white; }
+#delete-torrent-warning { margin: 0 0 18px; overflow-wrap: anywhere; }

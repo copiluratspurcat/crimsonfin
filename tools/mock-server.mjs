@@ -73,8 +73,8 @@ export function createMockServer({ dist = path.join(ROOT, 'dist'), art = path.jo
     { id: 'a', name: 'ADATA', totalBytes: 4 * TB, freeBytes: 1.21 * TB, movieFolder: '/mnt/ADATA/Movies', seriesFolder: null },
     { id: 'b', name: 'WD Red', totalBytes: 6 * TB, freeBytes: 0.64 * TB, movieFolder: null, seriesFolder: '/mnt/WD/Shows' }],
     downloads: [
-      { hash: 'h1', name: 'Dune.Part.Two.2024.2160p.WEB-DL', state: 'downloading', progress: 64.2, sizeBytes: 21.6 * GB, downloadedBytes: 13.9 * GB, remainingBytes: 7.7 * GB, downloadSpeedBytes: 12.4 * 1024 ** 2, uploadSpeedBytes: 1.1 * 1024 ** 2, etaSeconds: 480, drive: 'ADATA', folder: '/mnt/ADATA/Movies', seeding: false },
-      { hash: 'h2', name: 'Severance.S02.1080p.WEB-DL', state: 'queuedDL', progress: 0, sizeBytes: 18.3 * GB, downloadedBytes: 0, remainingBytes: 18.3 * GB, downloadSpeedBytes: 0, uploadSpeedBytes: 0, etaSeconds: null, drive: 'WD Red', folder: '/mnt/WD/Shows', seeding: false }] };
+      { hash: 'a'.repeat(40), name: 'Dune.Part.Two.2024.2160p.WEB-DL', state: 'downloading', progress: 64.2, sizeBytes: 21.6 * GB, downloadedBytes: 13.9 * GB, remainingBytes: 7.7 * GB, downloadSpeedBytes: 12.4 * 1024 ** 2, uploadSpeedBytes: 1.1 * 1024 ** 2, etaSeconds: 480, drive: 'ADATA', folder: '/mnt/ADATA/Movies', seeding: false },
+      { hash: 'b'.repeat(40), name: 'Severance.S02.1080p.WEB-DL', state: 'queuedDL', progress: 0, sizeBytes: 18.3 * GB, downloadedBytes: 0, remainingBytes: 18.3 * GB, downloadSpeedBytes: 0, uploadSpeedBytes: 0, etaSeconds: null, drive: 'WD Red', folder: '/mnt/WD/Shows', seeding: false }] };
   const details = item => ({ ...item, MediaSources: [{ Id: id(999), MediaStreams: [
     { Type: 'Video', DisplayTitle: '4K HDR · HEVC' }, { Type: 'Audio', DisplayTitle: 'English 5.1' }, { Type: 'Audio', DisplayTitle: 'Romanian 2.0' },
     { Type: 'Subtitle', DisplayTitle: 'Romanian', Index: 3, Language: 'rum', Codec: 'srt' }, { Type: 'Subtitle', DisplayTitle: 'English', Index: 4, Language: 'eng', Codec: 'srt' },
@@ -140,6 +140,13 @@ export function createMockServer({ dist = path.join(ROOT, 'dist'), art = path.jo
     if (p === '/api/admin/filelist/settings') return json(res, 200, { apiConfigured: true, rssConfigured: true, rssPasskeyAvailable: true, username: 'guest', downloaderConfigured: true });
     if (p === '/api/admin/subtitles/status') return json(res, 200, { enabled: true, summary: { checked: 1284, haveRomanian: 1168, possiblyMissing: 116, attempted: 40, installed: 12, lastScanUtc: new Date().toISOString() } });
     if (p === '/api/admin/downloads') return json(res, 200, downloads);
+    if (p.startsWith('/api/admin/downloads/') && req.method === 'DELETE') {
+      const index = downloads.downloads.findIndex(t => t.hash === p.split('/').at(-1));
+      if (index < 0) return json(res, 404, { error: 'Torrent not found' });
+      downloads.downloads.splice(index, 1);
+      downloads.active = downloads.downloads.filter(t => t.progress < 100).length;
+      return json(res, 200, { ok: true });
+    }
     if (p.startsWith('/api/')) return json(res, 404, { error: 'mock: not found' });
     let file = path.join(DIST, p === '/' ? 'index.html' : p);
     if (!existsSync(file) || !statSync(file).isFile()) file = path.join(DIST, 'index.html');

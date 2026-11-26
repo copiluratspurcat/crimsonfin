@@ -568,6 +568,14 @@ export function createAppServer(options = {}) {
           requireAdmin(user);
           return json(res, 200, await downloadManager.status());
         }
+        const download = pathname.match(/^\/api\/admin\/downloads\/([\w-]+)$/);
+        if (download && req.method === 'DELETE') {
+          verifyMutation(req); requireAdmin(user);
+          const hash = download[1].toLowerCase();
+          await downloadManager.deleteTorrent(hash);
+          requestsFlow.markDownloadDeleted(hash);
+          return json(res, 200, { ok: true });
+        }
         const queue = pathname.match(/^\/api\/admin\/filelist\/queue\/(\d+)$/);
         if (queue && req.method === 'POST') {
           verifyMutation(req); requireAdmin(user);

@@ -148,6 +148,17 @@ async function run(mode, executablePath) {
     else { await page.click('.account-button'); await wait(300); await clickText('.menu button', 'Settings'); }
     await wait(600); await shot('08-settings');
     check('Downloads page opens', await clickText('.rail-item', 'Downloads')); await wait(600); await shot('09-downloads');
+    await page.click('.delete-torrent');
+    check('torrent confirmation identifies the release and focuses Cancel', await evaluate(() =>
+      document.querySelector('dialog[open]')?.textContent.includes('Dune.Part.Two') &&
+      document.activeElement?.textContent === 'Cancel'));
+    await clickText('dialog[open] button', 'Cancel');
+    check('Cancel leaves both torrents in place', await evaluate(() => document.querySelectorAll('.transfer').length === 2));
+    await page.click('.delete-torrent');
+    await clickText('dialog[open] button', 'Delete torrent and files');
+    await page.waitForFunction(() => document.querySelectorAll('.transfer').length === 1);
+    check('Confirm removes only the selected torrent', await evaluate(() =>
+      document.querySelector('.transfer strong')?.textContent.includes('Severance')));
     check('Admin page opens', await clickText('.rail-item', 'Admin')); await wait(600); await shot('10-admin');
 
     // Series details
