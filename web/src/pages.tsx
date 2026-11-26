@@ -120,26 +120,30 @@ export function LibraryPage({ kind, nextUp, onOpen, onPlay }: Nav & { kind: 'mov
 }
 
 /* --------------------------------- My list -------------------------------- */
-export function MyListPage({ watching, loadingWatching, onOpen, onPlay }: Nav & { watching: Item[]; loadingWatching: boolean }) {
+export function MyListPage({ watching, loadingWatching, watchingError, retryWatching, onOpen, onPlay }: Nav & {
+  watching: Item[]; loadingWatching: boolean; watchingError?: string; retryWatching: () => void;
+}) {
   const [tab, setTab] = useState<'favorites' | 'watching' | 'watched'>('favorites');
   const favorites = useLibrary({ type: 'all', sort: 'name', filter: 'favorite' });
   const watched = useLibrary({ type: 'all', sort: 'played', filter: 'played' });
   const active = tab === 'favorites' ? favorites : tab === 'watched' ? watched : null;
   const items = active ? active.items : watching;
   const loading = active ? active.isPending : loadingWatching;
+  const error = active ? active.error?.message : watchingError;
+  const retry = active ? () => void active.refetch() : retryWatching;
   return <div className="page mylist">
     <PageHead title="My list"><Tabs label="My list" value={tab} onChange={setTab} options={[
       { value: 'favorites', label: 'Favorites', count: favorites.isPending ? undefined : favorites.total },
       { value: 'watching', label: 'Continue watching', count: watching.length },
       { value: 'watched', label: 'Watched', count: watched.isPending ? undefined : watched.total }]} /></PageHead>
-    {active?.error && <Empty action={<button className="btn" onClick={() => void active.refetch()}>Retry</button>}>{active.error.message}</Empty>}
+    {error && <Empty action={<button className="btn" onClick={retry}>Retry</button>}>{error}</Empty>}
     {loading ? <Empty>Loading…</Empty> : items.length ? <>
       <div className="wide-grid">
         {items.map(i => <WideCard key={i.Id} item={i} onOpen={onOpen} onPlay={onPlay}
           subtitle={tab === 'watching' ? undefined : [i.Type === 'Series' ? 'Show' : 'Movie', i.ProductionYear, runtime(i.RunTimeTicks)].filter(Boolean).join(' · ')} />)}
       </div>
       {active && <LoadMore more={!!active.hasNextPage} loading={active.isFetchingNextPage} onMore={() => { if (!active.isFetchingNextPage) void active.fetchNextPage(); }} />}
-    </> : !active?.error && <Empty>{tab === 'favorites' ? 'Nothing saved yet. Open any title and choose “My list”.'
+    </> : !error && <Empty>{tab === 'favorites' ? 'Nothing saved yet. Open any title and choose “My list”.'
       : tab === 'watching' ? 'Nothing in progress.' : 'Nothing watched yet.'}</Empty>}
   </div>;
 }
@@ -159,7 +163,7 @@ export function SearchPage({ initial, onOpen, onPlay }: Nav & { initial: string 
       <Tabs label="Result type" value={filter} onChange={setFilter} options={[{ value: 'all', label: 'All' },
         { value: 'Movie', label: 'Movies', count: all.filter(i => i.Type === 'Movie').length },
         { value: 'Series', label: 'Shows', count: all.filter(i => i.Type === 'Series').length }]} /></PageHead>}
-    {term.length < 2 ? <Empty>Start typing to search your library.</Empty> : shown.length ? <div className="poster-grid">
+    {term.length < 2 ? <Empty>Start typing to search your library.</Empty> : search.isError ? <Empty action={<button className="btn" onClick={() => void search.refetch()}>Retry</button>}>{search.error.message}</Empty> : shown.length ? <div className="poster-grid">
       {shown.map(i => <div key={i.Id} className="highlighted"><PosterCard item={i} onOpen={onOpen} onPlay={onPlay}
         subtitle={`${i.Type === 'Series' ? 'Show' : 'Movie'}${i.ProductionYear ? ' · ' + i.ProductionYear : ''}`} /></div>)}
     </div> : !search.isFetching && <Empty>No matches for “{term}”.</Empty>}

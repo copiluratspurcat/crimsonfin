@@ -5,7 +5,7 @@ import { isTv } from './tv';
 import { buildHlsUrl } from './hls-url';
 import { ArrowLeft, Captions, Clapperboard, Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Settings2, SkipForward, SlidersHorizontal, Volume2, VolumeX, X } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { api, itemArt, queryClient, statusOf, type PageResult } from './lib';
+import { requestDeadline, api, itemArt, queryClient, statusOf, type PageResult } from './lib';
 import { languageKey, setPrefs, usePrefs } from './prefs';
 
 type StreamInfo = {
@@ -92,7 +92,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
     setStatus('');
     setCanRetry(false);
     api<Details>('/api/items/' + encodeURIComponent(item.Id), {
-      signal: AbortSignal.any([abort.signal, AbortSignal.timeout(20_000)])
+      signal: requestDeadline(20_000, abort.signal)
     }).then(value => {
       if (abort.signal.aborted) return;
       setDetail(value);
@@ -325,7 +325,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
         })
       };
       playbackReport = playbackReport.then(async () => {
-        const response = await fetch('/api/playback', { ...init, signal: AbortSignal.timeout(12_000) });
+        const response = await fetch('/api/playback', { ...init, signal: requestDeadline(12_000) });
         if (response.status === 401) void queryClient.invalidateQueries({ queryKey: ['me'] });
         if (event === 'Stopped' && response.ok) void queryClient.invalidateQueries({ queryKey: ['resume'] });
       }).catch(() => {});
@@ -404,9 +404,11 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
     const progress = setInterval(() => report('Progress'), 15_000);
     return () => {
       disposed = true;
-      if (Number.isFinite(video.currentTime) && video.currentTime > 0) resumeRef.current = video.currentTime;
-      resumePlayingRef.current = !video.paused;
-      if (started) report('Stopped');
+      if (started) {
+        if (Number.isFinite(video.currentTime)) resumeRef.current = video.currentTime;
+        resumePlayingRef.current = !video.paused;
+        report('Stopped');
+      }
       clearInterval(progress);
       clearTimeout(startupTimeout);
       for (const [event, handler] of [

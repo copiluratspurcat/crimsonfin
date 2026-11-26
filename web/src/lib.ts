@@ -20,12 +20,25 @@ export type RequestEntry = {
 };
 export type Release = { id: string; name: string; size: string; seeders: number | null; downloadable?: boolean };
 
+// Some Android TV WebViews lack AbortSignal.timeout and AbortSignal.any.
+export function requestDeadline(milliseconds: number, parent?: AbortSignal) {
+  const controller = new AbortController();
+  const cancel = () => { clearTimeout(timer); controller.abort(); };
+  const timer = setTimeout(() => {
+    parent?.removeEventListener('abort', cancel);
+    controller.abort();
+  }, milliseconds);
+  if (parent?.aborted) cancel();
+  else parent?.addEventListener('abort', cancel, { once: true });
+  return controller.signal;
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
     response = await fetch(path, {
       credentials: 'same-origin', ...init,
-      signal: init.signal || AbortSignal.timeout(20000),
+      signal: init.signal || requestDeadline(20_000),
       headers: { ...(init.body ? { 'content-type': 'application/json' } : {}), ...init.headers }
     });
   } catch (error) {
