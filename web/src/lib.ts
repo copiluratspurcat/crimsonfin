@@ -6,7 +6,7 @@ export type Item = {
   ImageTags?: { Primary?: string; Thumb?: string }; BackdropImageTags?: string[];
   Id: string; Name: string; OriginalTitle?: string; Type: string; Overview?: string; ProductionYear?: number;
   CommunityRating?: number; RunTimeTicks?: number; Genres?: string[]; DateCreated?: string;
-  UserData?: { IsFavorite?: boolean; PlaybackPositionTicks?: number; PlayedPercentage?: number; Played?: boolean };
+  UserData?: { LastPlayedDate?: string; IsFavorite?: boolean; PlaybackPositionTicks?: number; PlayedPercentage?: number; Played?: boolean };
   IndexNumber?: number; IndexNumberEnd?: number; ParentIndexNumber?: number;
   SeriesId?: string; SeriesName?: string; ChildCount?: number;
   SeriesPrimaryImageTag?: string; ParentBackdropItemId?: string; ParentBackdropImageTags?: string[];

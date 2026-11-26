@@ -618,3 +618,6 @@ html:has(.player) { overflow: hidden; }
 .filelist-peers { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .chip.filelist-fast { color: var(--green); }
 .chip.filelist-slow { color: var(--amber); }
+
+.skip-intro.above-up-next { bottom: 222px; }
+.crimsonfin-tv .skip-intro.above-up-next { bottom: calc(415 * var(--u)); }

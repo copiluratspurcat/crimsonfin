@@ -145,11 +145,11 @@ export function createDownloadManager({
     if (!response.ok) throw invalid('qBittorrent request failed', 502);
     return response;
   }
-  async function listRaw() {
+  async function listRaw(limit = 500) {
     const res = await api('/api/v2/torrents/info?filter=all');
     const data = await res.json();
     if (!Array.isArray(data)) throw invalid('Invalid qBittorrent status response', 502);
-    return data.slice(0, 500);
+    return data.slice(0, limit);
   }
   function driveForSavePath(p, drives) {
     if (typeof p !== 'string') return null;
@@ -188,6 +188,26 @@ export function createDownloadManager({
     } catch (err) {
       return { online: false, drives, downloads: [], active: 0,
         error: err.status === 503 ? 'qBittorrent is not configured' : 'qBittorrent is currently unavailable' };
+    }
+  }
+  let forcing = false;
+  async function forceStartDownloads() {
+    if (forcing || env.QBIT_FORCE_START_DOWNLOADS === 'false' || !env.QBIT_USERNAME || !env.QBIT_PASSWORD) return 0;
+    forcing = true;
+    try {
+      const torrents = await listRaw(Infinity);
+      const eligible = /^(?:downloading|stalledDL|queuedDL|pausedDL|stoppedDL|metaDL|allocating)$/;
+      const hashes = torrents.filter(t => typeof t.progress === 'number' && t.progress < 1 &&
+        torrentHash.test(String(t.hash)) && !t.force_start && eligible.test(t.state)).map(t => t.hash);
+      for (let i = 0; i < hashes.length; i += 100) {
+        await api('/api/v2/torrents/setForceStart', {
+          method: 'POST',
+          body: new URLSearchParams({ hashes: hashes.slice(i, i + 100).join('|'), value: 'true' })
+        });
+      }
+      return hashes.length;
+    } finally {
+      forcing = false;
     }
   }
   async function isInLibrary(torrent, kind) {
@@ -277,5 +297,5 @@ export function createDownloadManager({
       classifiedAsShow: classification.detectedSeries,
       drive: selected.drive, folder: savePath, availableBytes: selected.availableBytes };
   }
-  return { status, downloads, queueTorrentFile, deleteTorrent, isInLibrary, listRaw };
+  return { status, downloads, queueTorrentFile, deleteTorrent, isInLibrary, forceStartDownloads, listRaw };
 }

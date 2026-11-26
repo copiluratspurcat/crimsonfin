@@ -152,3 +152,28 @@ test('library placement requires a completed selected video at the expected size
   files = [{ name: '../Film.mkv', size: 10, progress: 1, priority: 1 }];
   assert.equal(await client.isInLibrary(torrent, 'movie'), false);
 });
+
+test('force start bypasses queueing for incomplete torrents only', async () => {
+  const queued = 'a'.repeat(40);
+  const paused = 'b'.repeat(40);
+  const calls = [];
+  const client = createDownloadManager({
+    env: { QBIT_USERNAME: 'test', QBIT_PASSWORD: 'test' },
+    fetchImpl: async (url, init) => {
+      if (url.pathname.endsWith('/auth/login')) return new Response('Ok.', { headers: { 'set-cookie': 'SID=test' } });
+      if (url.pathname.endsWith('/torrents/info')) return Response.json([
+        { hash: queued, state: 'queuedDL', progress: 0.2 },
+        { hash: paused, state: 'pausedDL', progress: 0.4 },
+        { hash: 'c'.repeat(40), state: 'downloading', progress: 0.5, force_start: true },
+        { hash: 'd'.repeat(40), state: 'queuedUP', progress: 1 },
+        { hash: 'e'.repeat(40), state: 'checkingDL', progress: 0.6 }
+      ]);
+      assert.equal(url.pathname, '/api/v2/torrents/setForceStart');
+      assert.equal(init.method, 'POST');
+      calls.push(Object.fromEntries(init.body));
+      return new Response('');
+    }
+  });
+  assert.equal(await client.forceStartDownloads(), 2);
+  assert.deepEqual(calls, [{ hashes: queued + '|' + paused, value: 'true' }]);
+});

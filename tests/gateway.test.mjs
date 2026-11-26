@@ -5,6 +5,8 @@ import { once } from 'node:events';
 import { createAppServer, rewriteM3u8 } from '../server/index.mjs';
 
 const VIDEO = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+const earlier = { Id: 'b'.repeat(32), Type: 'Episode', SeriesId: 'a'.repeat(32), IndexNumber: 12, Name: 'Earlier', RunTimeTicks: 12e9 };
+const later = { ...earlier, Id: 'c'.repeat(32), IndexNumber: 17, Name: 'Later' };
 const userData = [];
 const itemQueries = [];
 function upstream(isRevoked = () => false) {
@@ -45,6 +47,13 @@ function upstream(isRevoked = () => false) {
       { Type: 'Intro', StartTicks: 12e7, EndTicks: 92e7 }, { Type: 'Outro', StartTicks: 2500e7, EndTicks: 2600e7 }] })); return; }
     if (p.pathname.startsWith('/MediaSegments/') || p.pathname.includes('/IntroSkipperSegments')) { res.writeHead(404); res.end(); return; }
     if (p.pathname === '/Genres') { res.end(JSON.stringify({ Items: [{ Name: 'Drama' }, { Name: 'Comedie' }] })); return; }
+    if (p.pathname.endsWith('/Items/Resume')) { res.end(JSON.stringify({ Items: [later], TotalRecordCount: 1 })); return; }
+    if (p.pathname.endsWith('/Items') && p.searchParams.has('Ids')) {
+      const ids = p.searchParams.get('Ids').split(',');
+      res.end(JSON.stringify({ Items: [earlier, later].filter(i => ids.includes(i.Id)) })); return;
+    }
+    const episode = [earlier, later].find(item => p.pathname.endsWith('/Items/' + item.Id));
+    if (episode) { res.end(JSON.stringify(episode)); return; }
     if (p.pathname.endsWith('/Items') || p.pathname.includes('/Items/')) { res.end(JSON.stringify({ Items: [{ Id: VIDEO, Name: 'Test Movie', Type: 'Movie' }], TotalRecordCount: 1 })); return; }
     res.end('{"Items":[],"TotalRecordCount":0}');
   });
@@ -249,4 +258,26 @@ test('only admins can delete a request, and deletion leaves no review row', asyn
   assert.equal((await request(path, admin, { method: 'DELETE', headers: { origin: 'https://untrusted.example' } })).status, 403);
   assert.equal((await request(path, admin, { method: 'DELETE' })).status, 200);
   assert.deepEqual(await list(), []);
+});
+
+test('replaying an earlier episode replaces the later one and stale stop reports cannot switch it back', async t => {
+  const { request, login } = await fixture(t);
+  const session = await login();
+  const play = (item, playbackId, event, positionTicks) => request('/api/playback', session, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ itemId: item.Id, playbackId, event, positionTicks })
+  });
+  const a = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+  const b = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb';
+  assert.equal((await play(later, a, 'Playing', 0)).status, 200);
+  assert.equal((await play(earlier, b, 'Playing', 500)).status, 200);
+  assert.equal((await play(earlier, b, 'Progress', 12345)).status, 200);
+  assert.equal((await play(later, a, 'Stopped', 99999)).status, 200);
+  const resume = async cookie => (await (await request('/api/continue', cookie)).json()).Items;
+  const current = await resume(session);
+  assert.deepEqual(current.map(item => item.Id), [earlier.Id]);
+  assert.equal(current[0].UserData.PlaybackPositionTicks, 12345);
+  // Remove from Continue Watching must not revive the previous episode from the same show.
+  assert.equal((await request('/api/items/' + earlier.Id + '/progress', session, { method: 'DELETE' })).status, 200);
+  assert.deepEqual(await resume(session), []);
 });

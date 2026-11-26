@@ -217,13 +217,25 @@ async function run(mode, executablePath) {
     const ccStates = [await cc()];
     for (let i = 0; i < 2; i++) { await page.keyboard.press('c'); await wait(300); ccStates.push(await cc()); }
     check('C toggles subtitles even with the preference Off', ccStates.join() === 'false,true,false', ccStates.join());
+    check('Next episode is available in the player controls', await evaluate(() =>
+      !!document.querySelector('button[aria-label="Next episode"]')));
+    await evaluate(() => {
+      const video = document.querySelector('video');
+      Object.defineProperty(video, 'currentTime', { configurable: true, writable: true, value: 3001 });
+      video.dispatchEvent(new Event('timeupdate'));
+    });
+    await page.waitForFunction(() => [...document.querySelectorAll('.skip-intro')].some(b => b.textContent === 'Skip outro'));
+    await clickText('.skip-intro', 'Skip outro');
+    check('Skip outro seeks to the end of the marked segment', await evaluate(() =>
+      document.querySelector('video').currentTime === 3300));
+    await evaluate(() => { delete document.querySelector('video').currentTime; });
     if (!tv) await page.focus(optionsButton);
     await evaluate(() => document.querySelector('video').dispatchEvent(new Event('ended'))); await wait(1200);
     check('Up next appears after an episode', await evaluate(() => !!document.querySelector('.up-next')));
     const focusStayed = await evaluate(selector => document.activeElement?.matches(selector),
       tv ? '.up-next button.primary' : optionsButton);
-    // TV: the remote should land on "Play now". PC: focus must not move (Space would start it).
-    check(tv ? 'Up next focuses Play now on TV' : 'Up next leaves keyboard focus alone', focusStayed);
+    // TV: the remote should land on "Next episode". PC: focus must not move (Space would start it).
+    check(tv ? 'Up next focuses Next episode on TV' : 'Up next leaves keyboard focus alone', focusStayed);
     await shot('13-up-next');
 
     check('no JavaScript errors', pageErrors.length === 0, pageErrors.join(' | '));
