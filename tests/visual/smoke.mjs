@@ -107,6 +107,18 @@ async function run(mode, executablePath) {
       check(`${name} tab opens`, await tab(name)); await shot(file);
     }
 
+    await page.type('input[aria-label="Search FileList"]', 'Dune');
+    await page.click('button[aria-label="Search FileList"]');
+    await page.waitForSelector('.filelist-summary');
+    check('FileList shows readable titles, quality, sizes and useful seeder labels', await evaluate(() => {
+      const [first, second, third] = [...document.querySelectorAll('.filelist-summary')];
+      return first?.querySelector('strong')?.textContent === 'Dune Part Two' &&
+        first.textContent.includes('4K · Blu-ray · Remux · 52 GB') &&
+        first.textContent.includes('57 seeders') && first.textContent.includes('Best seeded') &&
+        second?.textContent.includes('2 seeders') && second.textContent.includes('Few seeders') &&
+        third?.textContent.includes('Seed count unavailable');
+    }));
+
     // Search
     if (tv) {
       await tab('Search');

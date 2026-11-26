@@ -1,3 +1,5 @@
+import { FileListRelease } from './filelist-release';
+import { bestSeedCount } from './filelist-presentation';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, DownloadCloud, Film, Plus, RefreshCw, Search, Send, Tv2 } from 'lucide-react';
@@ -38,6 +40,7 @@ export function RequestsPage({ user, onShowDownloads }: { user: Account; onShowD
     mutationFn: () => api('/api/requests', { method: 'POST', body: JSON.stringify({ kind, title, year, notes }) }),
     onSuccess: () => { setTitle(''); setYear(''); setNotes(''); void qc.invalidateQueries({ queryKey: ['requests'] }); }
   });
+  const best = bestSeedCount(catalog.data?.results || []);
   const list = requests.data?.requests || [];
   return <div className="page requests">
     <PageHead title="Requests" meta="Ask for a movie or show. An admin reviews every request." />
@@ -70,8 +73,8 @@ export function RequestsPage({ user, onShowDownloads }: { user: Account; onShowD
           {catalog.isError && <p className="error" role="alert">{catalog.error.message}</p>}
           {catalog.data && (!catalog.data.configured ? <Empty>FileList isn't configured on this server. You can still send requests.</Empty>
             : catalog.data.results.length ? <ul className="release-list">{catalog.data.results.map((r, index) => <li key={`${r.id}-${index}`} className="release">
-              <button className="release-pick" title="Use this title" onClick={() => setTitle(r.name.replace(/\./g, ' '))}>
-                <span><strong>{r.name}</strong><small>{r.size ? `${r.size} · ` : ''}{r.seeders == null ? 'Recent RSS entry' : `${r.seeders} seeders`}</small></span><Plus aria-hidden /></button>
+              <button className="release-pick" onClick={() => setTitle(r.name.replace(/\./g, ' '))}>
+                <FileListRelease release={r} best={best} /><Plus aria-hidden /></button>
               {user.isAdmin && catalog.data!.source === 'api' && r.downloadable && <span className="release-actions">
                 <a className="btn small" href={`/api/admin/filelist/torrent/${r.id}`} download>.torrent</a>
                 {filelistSettings.data?.downloaderConfigured && <button className="btn small primary" disabled={queue.isPending}

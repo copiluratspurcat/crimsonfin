@@ -1,3 +1,5 @@
+import { FileListRelease } from './filelist-release';
+import { bestSeedCount } from './filelist-presentation';
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw, Search, ShieldCheck } from 'lucide-react';
@@ -36,6 +38,8 @@ export function AdminSection() {
   const check = (loading: boolean, error: boolean, ok?: boolean, yes = 'Connected', no = 'Not connected') =>
     loading ? 'Checking…' : error ? 'Unavailable' : ok ? yes : no;
   const list = requests.data?.requests || [];
+  const releases = (options.data?.results || []).slice(0, 25);
+  const best = bestSeedCount(releases);
   return <div className="settings-content">
     <h2 className="section-title">Admin</h2>
     <div className="tiles">
@@ -71,8 +75,8 @@ export function AdminSection() {
         {options.isFetching && <p className="muted">Searching tracker…</p>}
         {options.error && <p className="error">{options.error.message}</p>}
         {options.data && !options.data.results.length && <p className="muted">No releases found. Try another title or search FileList manually.</p>}
-        {(options.data?.results || []).slice(0, 25).map(x => <div className="list-row" key={x.id}>
-          <span className="list-text"><strong>{x.name}</strong><small>{x.size} · {x.seeders ?? '—'} seeders</small></span>
+        {releases.map(x => <div className="list-row" key={x.id}>
+          <FileListRelease release={x} best={best} />
           <button className="btn small primary" disabled={busy || !x.downloadable} onClick={() => queue.mutate({ id: r.id, releaseId: x.id })}>Download</button>
         </div>)}
       </div>}

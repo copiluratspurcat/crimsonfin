@@ -12,6 +12,13 @@ the server updater tracks the latest stable GitHub Release. Verify the published
 tag and update assets, the deployed gateway version, and the public health
 endpoint before reporting success.
 
+## Release 2.5.13
+
+FileList search and the admin release picker show readable titles, season or
+episode where known, video quality, size and seed counts. The best seeded result
+gets a badge only at ten or more seeders. The original release stays available
+on hover and continues to identify the same request or download.
+
 ## Release 2.5.12
 
 Admins can delete a torrent and its downloaded files from Downloads. A

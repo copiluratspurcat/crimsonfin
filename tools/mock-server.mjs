@@ -137,6 +137,11 @@ export function createMockServer({ dist = path.join(ROOT, 'dist'), art = path.jo
     if ((m = p.match(/^\/api\/series\/(\w+)\/episodes$/))) return json(res, 200, page(episodes));
     if (p === '/api/requests') return json(res, 200, { requests });
     if (p === '/api/admin/status') return json(res, 200, { jellyfinReachable: true, filelistConfigured: true, pendingRequests: 1 });
+    if (p === '/api/filelist/search') return json(res, 200, { configured: true, source: 'api', results: [
+      { id: '11', name: 'Dune.Part.Two.2024.2160p.BluRay.REMUX-GROUP', size: '52 GB', seeders: 57, downloadable: true },
+      { id: '12', name: 'Dune.Part.Two.2024.1080p.WEB-DL-GROUP', size: '8 GB', seeders: 2, downloadable: true },
+      { id: '13', name: 'Dune.Part.Two.2024.720p.WEBRip-GROUP', size: '2 GB', seeders: null, downloadable: false }
+    ] });
     if (p === '/api/admin/filelist/settings') return json(res, 200, { apiConfigured: true, rssConfigured: true, rssPasskeyAvailable: true, username: 'guest', downloaderConfigured: true });
     if (p === '/api/admin/subtitles/status') return json(res, 200, { enabled: true, summary: { checked: 1284, haveRomanian: 1168, possiblyMissing: 116, attempted: 40, installed: 12, lastScanUtc: new Date().toISOString() } });
     if (p === '/api/admin/downloads') return json(res, 200, downloads);

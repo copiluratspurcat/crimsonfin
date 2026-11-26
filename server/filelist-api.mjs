@@ -45,7 +45,8 @@ export function parseFilelistApiResults(data, categories) {
     results.push({
       id, name: name.slice(0, 220),
       size: String(item.size || '').slice(0, 80),
-      seeders: Number.isFinite(Number(item.seeders)) ? Number(item.seeders) : null,
+      seeders: (typeof item.seeders === 'number' || (typeof item.seeders === 'string' && item.seeders.trim() !== '')) &&
+        Number.isSafeInteger(Number(item.seeders)) && Number(item.seeders) >= 0 ? Number(item.seeders) : null,
       leechers: Number.isFinite(Number(item.leechers)) ? Number(item.leechers) : null,
       category: String(item.category ?? '').slice(0, 20),
       imdb: String(item.imdb || '').slice(0, 40),
