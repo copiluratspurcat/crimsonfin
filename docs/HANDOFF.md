@@ -12,6 +12,16 @@ the server updater tracks the latest stable GitHub Release. Verify the published
 tag and update assets, the deployed gateway version, and the public health
 endpoint before reporting success.
 
+## Release 2.5.15
+
+Continue Watching keeps the latest CrimsonFin playback per series and account,
+including replays of earlier episodes. Up Next stays separate. The player shows
+Skip intro and Skip outro when markers exist, and Next episode when available.
+The gateway force-starts incomplete qBittorrent downloads every 15 seconds.
+Set `QBIT_FORCE_START_DOWNLOADS=false` to stop applying force start. EN/RO title
+translations still require `TMDB_READ_ACCESS_TOKEN`; the switch explains the
+Jellyfin title fallback when it is absent.
+
 ## Release 2.5.14
 
 Completed requests clear automatically once qBittorrent confirms completion and

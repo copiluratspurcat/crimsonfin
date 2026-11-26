@@ -1,7 +1,7 @@
 import { setPrefs, usePrefs } from './prefs';
 import { useMediaTitle } from './titles';
 import { useEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, CornerDownLeft, DownloadCloud, LogOut, Search, Settings2, ShieldCheck } from 'lucide-react';
 import { api, itemArt, useDebounced, type Account, type Item, type PageResult } from './lib';
 import { Artwork, Logo } from './ui';
@@ -53,9 +53,11 @@ export function TopNav({ tab, user, onTab, onOpen, onSearchAll, onSignOut }: Nav
 function TitleLanguageSwitch() {
   const romanian = usePrefs().titleLanguage === 'ro';
   const nextLanguage = romanian ? 'en' : 'ro';
+  const translated = useQueryClient().getQueryData<{ titleTranslations?: boolean }>(['me'])?.titleTranslations;
   return <button type="button" className="title-language" role="switch"
     aria-label="Romanian media titles" aria-checked={romanian}
-    title="Preferred language for titles and subtitles · English / Română"
+    title={translated ? 'Preferred language for titles and subtitles · English / Română'
+      : 'Subtitle language · Titles use Jellyfin metadata until translations are configured'}
     onClick={() => setPrefs({ titleLanguage: nextLanguage, subtitleLanguage: nextLanguage })}>
     <span aria-hidden="true">EN</span><span aria-hidden="true" lang="ro">RO</span>
   </button>;

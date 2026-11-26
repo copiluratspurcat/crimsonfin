@@ -91,6 +91,11 @@ function initDb(db) {
       status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS request_user_date ON requests (user_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS last_played_episode (
+      user_id TEXT NOT NULL, series_id TEXT NOT NULL, item_id TEXT NOT NULL,
+      playback_id TEXT NOT NULL, played_at INTEGER NOT NULL, position_ticks INTEGER NOT NULL,
+      PRIMARY KEY (user_id, series_id)
+    );
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `);
 }
@@ -368,8 +373,35 @@ export function createAppServer(options = {}) {
           const data = await jellyfin(`/Genres?${new URLSearchParams({ UserId: user.userId, IncludeItemTypes: type, Recursive: 'true', SortBy: 'SortName' })}`, user);
           return json(res, 200, { genres: (data?.Items || []).map(g => String(g?.Name || '')).filter(Boolean).slice(0, 200) });
         }
-        if (pathname === '/api/continue' && req.method === 'GET') return json(res, 200,
-          await jellyfin(`/Users/${user.userId}/Items/Resume?Limit=24&Fields=Overview,Genres,OriginalTitle`, user));
+        if (pathname === '/api/continue' && req.method === 'GET') {
+          const fields = 'Overview,Genres,OriginalTitle';
+          const resume = await jellyfin(`/Users/${user.userId}/Items/Resume?Limit=80&Fields=${fields}`, user);
+          const recent = db.prepare('SELECT * FROM last_played_episode WHERE user_id = ? ORDER BY played_at DESC LIMIT 80').all(user.userId);
+          if (!recent.length) return json(res, 200, resume);
+          const ids = recent.map(row => row.item_id).filter(Boolean);
+          const supplements = ids.length ? await jellyfin(`/Users/${user.userId}/Items?${new URLSearchParams({
+            Ids: ids.join(','), Recursive: 'true', IncludeItemTypes: 'Episode', Fields: fields, Limit: String(ids.length)
+          })}`, user).catch(error => {
+            if (error?.status === 401) throw error;
+            return { Items: [] };
+          }) : { Items: [] };
+          const items = new Map((supplements.Items || []).map(item => [item.Id, item]));
+          const bySeries = new Map(recent.map(row => [row.series_id, row]));
+          const result = (resume.Items || []).filter(item => {
+            const row = item.Type === 'Episode' && bySeries.get(item.SeriesId);
+            return !row || (row.item_id && !items.has(row.item_id));
+          });
+          for (const row of recent) {
+            const item = items.get(row.item_id);
+            if (!item || item.Type !== 'Episode' || item.SeriesId !== row.series_id) continue;
+            const atEnd = item.RunTimeTicks > 0 && row.position_ticks >= item.RunTimeTicks - 10_000_000;
+            result.push({ ...item, UserData: { ...item.UserData, LastPlayedDate: new Date(row.played_at).toISOString(),
+              PlaybackPositionTicks: atEnd ? 0 : row.position_ticks,
+              PlayedPercentage: !atEnd && item.RunTimeTicks ? Math.min(100, 100 * row.position_ticks / item.RunTimeTicks) : 0 } });
+          }
+          result.sort((a, b) => (Date.parse(b.UserData?.LastPlayedDate || '') || 0) - (Date.parse(a.UserData?.LastPlayedDate || '') || 0));
+          return json(res, 200, { Items: result, TotalRecordCount: result.length });
+        }
         if (pathname === '/api/nextup' && req.method === 'GET') return json(res, 200,
           await jellyfin(`/Shows/NextUp?UserId=${encodeURIComponent(user.userId)}&Limit=30`, user));
         if (pathname === '/api/search' && req.method === 'GET') {
@@ -435,10 +467,10 @@ export function createAppServer(options = {}) {
             if (s?.Type === 'Intro' && !found.intro) found.intro = value;
             if (s?.Type === 'Outro' && !found.credits) found.credits = value;
           }
-          if (!found.intro && !found.credits) {
+          if (!found.intro || !found.credits) {
             const plugin = await optional(`/Episode/${id}/IntroSkipperSegments`);
-            found.intro = span(Number(plugin?.Introduction?.IntroStart), Number(plugin?.Introduction?.IntroEnd));
-            found.credits = span(Number(plugin?.Credits?.IntroStart), Number(plugin?.Credits?.IntroEnd));
+            found.intro ||= span(Number(plugin?.Introduction?.IntroStart), Number(plugin?.Introduction?.IntroEnd));
+            found.credits ||= span(Number(plugin?.Credits?.IntroStart), Number(plugin?.Credits?.IntroEnd));
           }
           return json(res, 200, found);
         }
@@ -459,6 +491,7 @@ export function createAppServer(options = {}) {
           // A zero resume position removes the item from Continue watching without marking it watched.
           await jellyfinEither([`/Users/${user.userId}/Items/${id}/UserData`, `/UserItems/${id}/UserData?userId=${encodeURIComponent(user.userId)}`],
             user, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ PlaybackPositionTicks: 0 }) });
+          db.prepare("UPDATE last_played_episode SET item_id = '', playback_id = '' WHERE user_id = ? AND item_id = ?").run(user.userId, id);
           return json(res, 200, { ok: true });
         }
         if (pathname === '/api/playback' && req.method === 'POST') {
@@ -466,11 +499,27 @@ export function createAppServer(options = {}) {
           const data = await bodyJson(req);
           if (!['Playing', 'Progress', 'Stopped'].includes(data.event)) failure('Unknown playback event');
           safeId(data.itemId);
-          const ticks = Math.max(0, Math.round(Number(data.positionTicks) || 0));
+          const rawTicks = Number(data.positionTicks);
+          const ticks = Number.isFinite(rawTicks) ? Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.round(rawTicks))) : 0;
           const payload = { ItemId: data.itemId, PositionTicks: ticks, IsPaused: Boolean(data.isPaused),
             PlayMethod: data.method === 'DirectPlay' ? 'DirectPlay' : 'Transcode' };
           await jellyfin(`/Sessions/Playing${data.event === 'Playing' ? '' : '/' + data.event}`, user,
             { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+          if (typeof data.playbackId === 'string' && /^[a-f0-9-]{36}$/i.test(data.playbackId)) {
+            if (data.event === 'Playing') {
+              const item = await jellyfin(`/Users/${user.userId}/Items/${data.itemId}`, user).catch(() => null);
+              if (item?.Type === 'Episode' && item.SeriesId && item.Id === data.itemId) {
+                db.prepare(`INSERT INTO last_played_episode VALUES (?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(user_id, series_id) DO UPDATE SET item_id=excluded.item_id,
+                    playback_id=excluded.playback_id, played_at=excluded.played_at, position_ticks=excluded.position_ticks
+                  WHERE excluded.played_at >= last_played_episode.played_at`)
+                  .run(user.userId, item.SeriesId, item.Id, data.playbackId, now, ticks);
+              }
+            } else {
+              db.prepare('UPDATE last_played_episode SET position_ticks = ? WHERE user_id = ? AND item_id = ? AND playback_id = ?')
+                .run(ticks, user.userId, data.itemId, data.playbackId);
+            }
+          }
           return json(res, 200, { ok: true });
         }
         if (pathname === '/api/requests' && req.method === 'GET') {
@@ -625,6 +674,13 @@ export function createAppServer(options = {}) {
       json(res, err.status || 502, { error: hideSecrets(err) });
     }
   });
+  if (env.QBIT_FORCE_START_DOWNLOADS !== 'false' && env.QBIT_USERNAME && env.QBIT_PASSWORD) {
+    const forceDownloads = () => void downloadManager.forceStartDownloads().catch(() => {});
+    server.on('listening', forceDownloads);
+    const timer = setInterval(forceDownloads, 15_000);
+    timer.unref();
+    server.on('close', () => clearInterval(timer));
+  }
   return { server, db };
 }
 

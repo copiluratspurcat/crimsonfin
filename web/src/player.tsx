@@ -165,15 +165,23 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
     enabled: item.Type === 'Episode' && !!item.SeriesId,
     queryFn: () => api<PageResult>(`/api/series/${encodeURIComponent(item.SeriesId!)}/episodes`) }).data;
   const nextEpisode = useMemo(() => {
-    const list = episodes?.Items ?? [];
+    const list = [...(episodes?.Items ?? [])].sort((a, b) =>
+      (a.ParentIndexNumber ?? Number.MAX_SAFE_INTEGER) - (b.ParentIndexNumber ?? Number.MAX_SAFE_INTEGER) ||
+      (a.IndexNumber ?? Number.MAX_SAFE_INTEGER) - (b.IndexNumber ?? Number.MAX_SAFE_INTEGER));
     const at = list.findIndex(e => e.Id === item.Id);
-    return at >= 0 ? list[at + 1] : undefined;
+    if (at < 0) return undefined;
+    const current = list[at];
+    if (current.ParentIndexNumber == null || current.IndexNumber == null) return list[at + 1];
+    return list.slice(at + 1).find(episode => episode.ParentIndexNumber != null && episode.IndexNumber != null &&
+      (episode.ParentIndexNumber > current.ParentIndexNumber! ||
+       episode.ParentIndexNumber === current.ParentIndexNumber &&
+       episode.IndexNumber > (current.IndexNumberEnd ?? current.IndexNumber!)));
   }, [episodes, item.Id]);
   const [ended, setEnded] = useState(false);
   const [dismissedNext, setDismissedNext] = useState(false);
   const [countdown, setCountdown] = useState(10);
   const credits = segments?.credits;
-  const inCredits = !!credits && clock >= credits.start && (!duration || clock < duration - 1);
+  const inCredits = !!credits && clock >= credits.start && clock < credits.end && (!duration || clock < duration - 1);
   const showNext = !!nextEpisode && !!onNext && !dismissedNext && (ended || inCredits);
   const autoNext = showNext && prefs.autoplayNext;
   useEffect(() => {
@@ -188,6 +196,14 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
   function skipIntro() {
     const v = videoRef.current;
     if (v && intro) { v.currentTime = intro.end; setClock(intro.end); }
+  }
+
+  function skipOutro() {
+    const video = videoRef.current;
+    if (!video || !credits) return;
+    const end = duration > 0 ? Math.min(credits.end, duration) : credits.end;
+    video.currentTime = end;
+    setClock(end);
   }
 
   const audioTrack = audioTracks.find(t => t.Index === audioIndex);
@@ -288,6 +304,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
     if (!video) return;
     let hls: Hls | null = null;
     let started = false;
+    const playbackId = crypto.randomUUID();
     let disposed = false;
     const uri = buildHlsUrl(item.Id, source.Id, quality, audioChoice);
 
@@ -297,18 +314,19 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
         method: 'POST', credentials: 'same-origin', keepalive: event === 'Stopped',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          itemId: item.Id, positionTicks: Math.round((video!.currentTime || 0) * 10_000_000),
+          itemId: item.Id, playbackId, positionTicks: Math.round((video!.currentTime || 0) * 10_000_000),
           isPaused: video!.paused, event, method: 'Transcode'
         })
       }).catch(() => {});
     }
     const onPlaying = () => {
+      const firstPlay = !started;
       started = true;
       setEnded(false);
       setPlaying(true);
       setLoading(false);
       setStatus('');
-      report('Playing');
+      report(firstPlay ? 'Playing' : 'Progress');
     };
     const onPaused = () => { setPlaying(false); report('Progress'); };
     const showPlaybackError = (message: string) => {
@@ -571,6 +589,8 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
 
       {inIntro && !showNext && <button className="skip-intro" autoFocus={isTv} onClick={skipIntro}>Skip intro</button>}
 
+      {inCredits && <button className={showNext ? 'skip-intro above-up-next' : 'skip-intro'} onClick={skipOutro}>Skip outro</button>}
+
       {showNext && nextEpisode && <section className="up-next" aria-label="Up next" aria-live="polite">
         <span className="up-next-art"><img src={itemArt(nextEpisode, 'Primary', 400)} alt="" onError={e => { e.currentTarget.style.visibility = 'hidden'; }}/></span>
         <span className="up-next-text">
@@ -578,7 +598,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
           <strong>S{nextEpisode.ParentIndexNumber} · E{nextEpisode.IndexNumber}  {nextEpisode.Name}</strong>
         </span>
         <span className="actions">
-          <button className="btn small primary" autoFocus={isTv} onClick={() => onNext?.(nextEpisode)}><Play fill="currentColor" aria-hidden/> Play now</button>
+          <button className="btn small primary" autoFocus={isTv} onClick={() => onNext?.(nextEpisode)}><Play fill="currentColor" aria-hidden/> Next episode</button>
           <button className="btn small" onClick={() => setDismissedNext(true)}>{autoNext ? 'Cancel' : 'Dismiss'}</button>
         </span>
       </section>}

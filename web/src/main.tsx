@@ -97,13 +97,13 @@ function App() {
     <TopNav tab={tab} user={user} onTab={goTab} onOpen={open} onSignOut={() => logout.mutate()}
       onSearchAll={term => { setSearchTerm(term); goTab('search'); }} />
     <main id="content">
-      {selected && <DetailsPage key={selected.Id} item={selected} nextUp={nextup.data?.Items || []} onBack={closeDetails}
+      {selected && <DetailsPage key={selected.Id} item={selected} nextUp={upcoming} onBack={closeDetails}
         onPlay={play} onChanged={() => void qc.invalidateQueries()} />}
       {keep('home', <HomePage hero={hero} recent={recent} upNext={upcoming.slice(recent.length)} movies={movies.data?.Items || []}
         series={series.data?.Items || []} loading={movies.isPending || series.isPending} error={libraryError} onRetry={retryLibrary} {...nav} />)}
       {keep('movies', <LibraryPage kind="movies" nextUp={[]} {...nav} />)}
       {keep('series', <LibraryPage kind="series" nextUp={upcoming.filter(i => i.Type === 'Episode')} {...nav} />)}
-      {keep('mylist', <MyListPage watching={upcoming} loadingWatching={resume.isPending || nextup.isPending} {...nav} />)}
+      {keep('mylist', <MyListPage watching={recent} loadingWatching={resume.isPending} {...nav} />)}
       {!selected && <Suspense fallback={pageFallback}>
         {tab === 'search' && <SearchPage initial={searchTerm} {...nav} />}
         {tab === 'requests' && <RequestsPage user={user} onShowDownloads={() => goTab(user.isAdmin ? 'downloads' : 'requests')} />}
