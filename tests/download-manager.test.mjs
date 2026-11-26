@@ -119,3 +119,36 @@ test('delete sends one exact hash and only deletes torrents within the download 
   await assert.rejects(client.deleteTorrent(hash), { status: 404 });
   assert.deepEqual(calls, [{ hashes: hash, deleteFiles: 'true' }]);
 });
+
+test('library placement requires a completed selected video at the expected size in the correct library', async t => {
+  const { mkdtemp, mkdir, rm, writeFile, realpath } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  if (process.platform === 'win32') return t.skip('The downloader uses POSIX server paths');
+  const folder = await realpath(await mkdtemp(path.join(tmpdir(), 'cf-placement-')));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const movies = path.join(folder, 'Movies');
+  await mkdir(movies);
+  const hash = 'd'.repeat(40);
+  let files = [{ name: 'Film.mkv', size: 10, progress: 1, priority: 1 }];
+  const client = createDownloadManager({
+    env: { QBIT_USERNAME: 'test', QBIT_PASSWORD: 'test' },
+    storageProvider: () => [{ movieFolder: movies }],
+    fetchImpl: async (url) => {
+      if (url.pathname.endsWith('/auth/login')) return new Response('Ok.', { headers: { 'set-cookie': 'SID=test' } });
+      assert.equal(url.pathname, '/api/v2/torrents/files');
+      assert.equal(url.searchParams.get('hash'), hash);
+      return Response.json(files);
+    }
+  });
+  const torrent = { hash, save_path: movies, progress: 1, state: 'uploading' };
+  assert.equal(await client.isInLibrary(torrent, 'movie'), false);
+  await writeFile(path.join(movies, 'Film.mkv'), Buffer.alloc(10));
+  assert.equal(await client.isInLibrary(torrent, 'movie'), true);
+  assert.equal(await client.isInLibrary(torrent, 'series'), false);
+  assert.equal(await client.isInLibrary({ ...torrent, state: 'moving' }, 'movie'), false);
+  files = [{ ...files[0], progress: 0.9 }];
+  assert.equal(await client.isInLibrary(torrent, 'movie'), false);
+  files = [{ name: '../Film.mkv', size: 10, progress: 1, priority: 1 }];
+  assert.equal(await client.isInLibrary(torrent, 'movie'), false);
+});

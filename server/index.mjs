@@ -496,6 +496,11 @@ export function createAppServer(options = {}) {
           return json(res, 201, { id, status: 'pending' });
         }
         const requestManage = pathname.match(/^\/api\/requests\/([\w-]+)$/);
+        if (requestManage && req.method === 'DELETE') {
+          verifyMutation(req); requireAdmin(user);
+          requestsFlow.deleteRequest(requestManage[1]);
+          return json(res, 200, { ok: true });
+        }
         if (requestManage && req.method === 'PATCH') {
           verifyMutation(req); requireAdmin(user);
           const form = await bodyJson(req);

@@ -232,3 +232,21 @@ test('torrent deletion requires admin permissions, a trusted origin and a valid 
   })).status, 403);
   assert.equal((await request('/api/admin/downloads/all', admin, { method: 'DELETE' })).status, 400);
 });
+
+test('only admins can delete a request, and deletion leaves no review row', async t => {
+  const { request, login } = await fixture(t);
+  const member = await login();
+  const response = await request('/api/requests', member, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'Example Movie', kind: 'movie' })
+  });
+  assert.equal(response.status, 201);
+  const list = async () => (await (await request('/api/requests', member)).json()).requests;
+  const [item] = await list();
+  const path = '/api/requests/' + item.id;
+  assert.equal((await request(path, member, { method: 'DELETE' })).status, 403);
+  const admin = await login('admin');
+  assert.equal((await request(path, admin, { method: 'DELETE', headers: { origin: 'https://untrusted.example' } })).status, 403);
+  assert.equal((await request(path, admin, { method: 'DELETE' })).status, 200);
+  assert.deepEqual(await list(), []);
+});

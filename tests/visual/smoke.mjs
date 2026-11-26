@@ -172,6 +172,15 @@ async function run(mode, executablePath) {
     check('Confirm removes only the selected torrent', await evaluate(() =>
       document.querySelector('.transfer strong')?.textContent.includes('Severance')));
     check('Admin page opens', await clickText('.rail-item', 'Admin')); await wait(600); await shot('10-admin');
+    const deleteRequest = '[aria-label="Delete request for Severance"]';
+    await page.click(deleteRequest);
+    check('request deletion confirms the title and preserves torrent files', await evaluate(() => {
+      const text = document.querySelector('dialog[open]')?.textContent || '';
+      return text.includes('Severance') && text.includes('files will stay');
+    }));
+    await clickText('dialog[open] button', 'Delete request');
+    await page.waitForSelector(deleteRequest, { hidden: true });
+    check('only the selected request is removed', await evaluate(() => document.querySelectorAll('.review').length > 0));
 
     // Series details
     await tab('Shows');

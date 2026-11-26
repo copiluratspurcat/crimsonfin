@@ -12,6 +12,13 @@ the server updater tracks the latest stable GitHub Release. Verify the published
 tag and update assets, the deployed gateway version, and the public health
 endpoint before reporting success.
 
+## Release 2.5.14
+
+Completed requests clear automatically once qBittorrent confirms completion and
+the selected video files exist at the expected sizes in the correct movie or
+show library. Admins can delete a request alone in Review requests. Deleting a
+torrent from Downloads also clears the requests linked to its exact hash.
+
 ## Release 2.5.13
 
 FileList search and the admin release picker show readable titles, season or
