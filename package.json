@@ -1,6 +1,6 @@
 {
   "name": "crimsonfin-client",
-  "version": "2.5.15",
+  "version": "2.5.16",
   "private": true,
   "main": "desktop/main.cjs",
   "description": "Custom Jellyfin client, secure gateway and FileList-backed media requests",

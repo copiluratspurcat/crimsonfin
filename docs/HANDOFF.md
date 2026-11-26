@@ -12,6 +12,11 @@ the server updater tracks the latest stable GitHub Release. Verify the published
 tag and update assets, the deployed gateway version, and the public health
 endpoint before reporting success.
 
+## Release 2.5.16
+
+TMDB title lookup uses the original title when its language matches the
+requested language and the translation field is blank.
+
 ## Release 2.5.15
 
 Continue Watching keeps the latest CrimsonFin playback per series and account,
