@@ -9,6 +9,11 @@ on:
       - '.github/workflows/android-tv.yml'
   workflow_dispatch:
   workflow_call:
+    secrets:
+      TV_KEYSTORE:
+        required: false
+      TV_KEYSTORE_PASSWORD:
+        required: false
 
 permissions:
   contents: read
@@ -38,6 +43,35 @@ jobs:
       - run: cp app/build/outputs/apk/debug/app-debug.apk ../CrimsonFin-TV-preview.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: crimsonfin-android-tv
+          name: tv-debug-preview
           path: CrimsonFin-TV-preview.apk
+          if-no-files-found: error
+
+      - name: Build and verify signed TV release
+        id: signed
+        if: github.ref == 'refs/heads/main'
+        env:
+          TV_KEYSTORE: ${{ secrets.TV_KEYSTORE }}
+          TV_KEYSTORE_PASSWORD: ${{ secrets.TV_KEYSTORE_PASSWORD }}
+        run: |
+          if [[ -z "$TV_KEYSTORE" && -z "$TV_KEYSTORE_PASSWORD" ]]; then
+            echo "::notice::TV signing secrets are missing. Publishing desktop packages only."
+            exit 0
+          fi
+          test -n "$TV_KEYSTORE" && test -n "$TV_KEYSTORE_PASSWORD"
+          umask 077
+          export TV_KEYSTORE_PATH="$RUNNER_TEMP/crimsonfin-tv.p12"
+          trap 'rm -f "$TV_KEYSTORE_PATH"' EXIT
+          printf '%s' "$TV_KEYSTORE" | base64 --decode > "$TV_KEYSTORE_PATH"
+          unset TV_KEYSTORE
+          gradle --no-daemon :app:assembleRelease
+          apk=app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$apk"
+          cp "$apk" ../CrimsonFin-TV.apk
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: steps.signed.outputs.ready == 'true'
+        with:
+          name: crimsonfin-android-tv
+          path: CrimsonFin-TV.apk
           if-no-files-found: error

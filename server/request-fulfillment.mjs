@@ -1,4 +1,5 @@
 import { classifyTorrent, parseTorrentInfo } from './media-layout.mjs';
+import { parseTorrentSizeBytes } from './download-manager.mjs';
 
 const normal = title => String(title || '').normalize('NFKD').replace(/[\u0300-\u036f]/g,'')
   .toLowerCase().replace(/[^a-z0-9]+/g,'');
@@ -52,6 +53,7 @@ export function createRequestFulfillment({db,filelist,downloadManager}){
      .run(v.request_id,v.state,v.release_id,v.release_name,v.torrent_hash,v.drive,v.destination,v.detail,v.updated_at);
     return get(id);
   };
+  const inFlight = new Set();
   const active=state=>['searching','queued','downloading','completed'].includes(state);
   async function queue(requestId,userId,releaseId,results=null){
     const request=find(requestId);
@@ -92,9 +94,10 @@ export function createRequestFulfillment({db,filelist,downloadManager}){
         detail:'Already present in qBittorrent; no duplicate torrent was added.'});
     }
     if (find(requestId)?.status !== 'approved') throw err('Request is no longer approved', 409);
-    const queued=await downloadManager.queueTorrentFile(bytes,layout.kind,Number(selected.size)||0,selected.name);
-    return save(requestId,{state:'queued',release_id:selected.id,release_name:selected.name,
-      torrent_hash:hash,drive:queued.drive,destination:queued.folder,detail:''});
+    const queued=await downloadManager.queueTorrentFile(bytes,layout.kind,parseTorrentSizeBytes(selected.size),selected.name);
+    return save(requestId,{state:queued.existing ? (queued.complete ? 'completed' : 'downloading') : 'queued',
+      release_id:selected.id,release_name:selected.name,torrent_hash:hash,drive:queued.drive,destination:queued.folder,
+      detail:queued.existing ? 'Already present in qBittorrent; no duplicate torrent was added.' : ''});
   }
   async function process(requestId,userId){
     const request=find(requestId);
@@ -102,8 +105,9 @@ export function createRequestFulfillment({db,filelist,downloadManager}){
     if(request.status!=='approved')throw err('Approve the request first',409);
     const prev=get(requestId);
     if(prev&&active(prev.state)&&prev.state!=='searching')return prev;
-    if(prev?.state==='searching'&&stamp()-prev.updated_at<90_000)return prev;
+    if (inFlight.has(requestId) || (prev?.state === 'searching' && stamp() - prev.updated_at < 90_000)) return prev;
     save(requestId,{state:'searching',detail:''});
+    inFlight.add(requestId);
     try{
       const q=searchTerm(request);
       let options=await filelist.search(q,userId);
@@ -122,7 +126,7 @@ export function createRequestFulfillment({db,filelist,downloadManager}){
       return await queue(requestId,userId,selected.id,options);
     }catch(error){
       return save(requestId,{state:'failed',detail:safeError(error?.message||'FileList or downloader unavailable')});
-    }
+    } finally { inFlight.delete(requestId); }
   }
   async function options(requestId,userId){
     const request=find(requestId);
@@ -133,12 +137,16 @@ export function createRequestFulfillment({db,filelist,downloadManager}){
   async function select(requestId,userId,releaseId){
     const current=get(requestId);
     const staleSearch=current?.state==='searching'&&stamp()-current.updated_at>=90_000;
-    if(current&&active(current.state)&&!staleSearch)return current;
-    const result=await options(requestId,userId);
-    if (find(requestId)?.status !== 'approved') throw err('Request is no longer approved', 409);
-    save(requestId,{state:'searching',release_id:String(releaseId)});
-    try{return await queue(requestId,userId,releaseId,result)}
-    catch(error){return save(requestId,{state:'failed',detail:safeError(error?.message)})}
+    if (inFlight.has(requestId) || (current && active(current.state) && !staleSearch)) return current;
+    if (find(requestId)?.status !== 'approved') throw err('Approve the request first', 409);
+    save(requestId,{state:'searching',release_id:String(releaseId),detail:''});
+    inFlight.add(requestId);
+    try {
+      const result = await options(requestId,userId);
+      return await queue(requestId,userId,releaseId,result);
+    } catch(error) {
+      return save(requestId,{state:'failed',detail:safeError(error?.message)});
+    } finally { inFlight.delete(requestId); }
   }
   function deleteRequests(ids) {
     db.exec('BEGIN');
@@ -158,7 +166,7 @@ export function createRequestFulfillment({db,filelist,downloadManager}){
   function deleteRequest(id) {
     if (!find(id)) throw err('Request not found', 404);
     const job = get(id);
-    if (job?.state === 'searching' && stamp() - job.updated_at < 90_000) {
+    if (inFlight.has(id) || (job?.state === 'searching' && stamp() - job.updated_at < 90_000)) {
       throw err('This request is being processed. Try again shortly.', 409);
     }
     deleteRequests([id]);
@@ -186,7 +194,7 @@ export function createRequestFulfillment({db,filelist,downloadManager}){
           if (request?.kind === row.kind && ['approved','fulfilled'].includes(request.status) &&
               get(row.request_id)?.torrent_hash === row.torrent_hash) deleteRequests([row.request_id]);
         }
-      } else if (row.state !== 'completed' && complete && stamp()-row.updated_at > 120_000) {
+      } else if (complete && stamp()-row.updated_at > 120_000) {
         save(row.request_id,{state:'failed',detail:'The download was removed from qBittorrent. Retry or choose another release.'});
       }
     }

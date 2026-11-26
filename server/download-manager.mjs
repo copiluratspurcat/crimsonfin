@@ -3,7 +3,7 @@ import { accessSync, constants, realpathSync, statSync, statfsSync, mkdirSync, e
 // Library and download paths are Linux paths reported by Jellyfin/qBittorrent on the server;
 // handle them as POSIX paths regardless of the platform running the code (or its tests).
 import { posix as path } from 'node:path';
-import { classifyTorrent, safeSeriesDestination } from './media-layout.mjs';
+import { classifyTorrent, parseTorrentInfo, safeSeriesDestination } from './media-layout.mjs';
 
 const GiB = 1024 ** 3;
 const SAFE_MARGIN = 2 * GiB;
@@ -46,7 +46,8 @@ function validateFolder(folder) {
   try {
     const real = realpathSync(folder);
     const drive = folderRoot(real);
-    if (!drive || !allowedChild(realpathSync(drive), real) || !statSync(real).isDirectory()) return null;
+    if (!drive || realpathSync(drive) !== drive || statSync(drive).dev === statSync(path.dirname(drive)).dev ||
+        !allowedChild(drive, real) || !statSync(real).isDirectory()) return null;
     accessSync(real, constants.W_OK);
     const stat = statfsSync(real, { bigint: true });
     return {
@@ -90,7 +91,7 @@ export function chooseStorage(drives, kind, requiredBytes = 0, reserved = {}) {
   if (!['movie', 'series'].includes(kind)) throw invalid('Choose Movie or TV Show for this download');
   const size = clamp(requiredBytes, 10 ** 15);
   const candidates = drives.filter(d => !!d[kind + 'Folder'])
-    .map(d => ({ ...d, usableBytes: Math.max(0, d.freeBytes - num(reserved[d.id]) - SAFE_MARGIN) }))
+    .map(d => ({ ...d, usableBytes: d.freeBytes - num(reserved[d.id]) - SAFE_MARGIN }))
     .sort((a, b) => b.usableBytes - a.usableBytes);
   const best = candidates.find(d => d.usableBytes >= size);
   if (!best) throw invalid('Not enough available space in your Jellyfin library drives', 507);
@@ -255,7 +256,13 @@ export function createDownloadManager({
       body: new URLSearchParams({ hashes: hash, deleteFiles: 'true' })
     });
   }
-  async function queueTorrentFile(torrent, kind, sizeBytes = 0, releaseName = '') {
+  let queuedOperation = Promise.resolve();
+  function queueTorrentFile(...args) {
+    const next = queuedOperation.then(() => enqueueTorrent(...args));
+    queuedOperation = next.catch(() => {});
+    return next;
+  }
+  async function enqueueTorrent(torrent, kind, sizeBytes = 0, releaseName = '') {
     if (!Buffer.isBuffer(torrent) || torrent.length < 10 || torrent.length > 5_000_000 || torrent[0] !== 0x64) {
       throw invalid('Invalid torrent metadata', 400);
     }
@@ -264,14 +271,24 @@ export function createDownloadManager({
     if (listed && classification.seasonNumber != null && Number(listed[1]) !== classification.seasonNumber) {
       throw invalid('Tracker advertises Season '+Number(listed[1])+' but the torrent files contain Season '+classification.seasonNumber,409);
     }
+    const { infoHash, sizeBytes: metadataSize } = parseTorrentInfo(torrent);
     const drives = storageProvider(env);
-    const raw = await listRaw();
+    const raw = await listRaw(Infinity);
+    const existing = raw.find(job => String(job.hash).toLowerCase() === infoHash);
+    if (existing) {
+      const drive = driveForSavePath(existing.save_path, drives);
+      if (!drive) throw invalid('This torrent is already queued outside the configured library drives', 409);
+      return { ok: true, queued: false, existing: true, complete: existing.progress >= 1,
+        kind: classification.kind, drive: drive.name, folder: existing.save_path };
+    }
     const reserved = Object.create(null);
     for (const t of raw) {
       const d = driveForSavePath(t.save_path, drives);
       if (d) reserved[d.id] = (reserved[d.id] || 0) + clamp(t.amount_left || 0, 10 ** 15);
     }
-    const selected = chooseStorage(drives, classification.kind, sizeBytes, reserved);
+    const requiredBytes = Math.max(metadataSize || 0, parseTorrentSizeBytes(sizeBytes));
+    if (!requiredBytes) throw invalid('Unable to determine torrent size safely', 422);
+    const selected = chooseStorage(drives, classification.kind, requiredBytes, reserved);
     let savePath = selected.savePath;
     if (classification.kind === 'series') {
       if (classification.multipleSeasons || !Number.isInteger(classification.seasonNumber)) {

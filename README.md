@@ -332,9 +332,8 @@ metadata separately from its corresponding installer.
 The **Windows NSIS installer** checks for updates shortly after launch and
 every four hours while running. A new release downloads automatically and
 prompts for a restart. Updates can also be checked under Settings → App
-updates. Linux AppImage supports the same mechanism. Linux `.deb`
-installations display a link to the latest stable release because system
-package installation can require elevated privileges. The web-only version
+updates. Linux AppImage and `.deb` installations check automatically and
+link to the latest stable release for manual installation. The web-only version
 runs from the server and is updated immediately on server deployment.
 
 Existing v2.4.0 desktop installations do **not** have an auto-updater: every
