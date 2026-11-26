@@ -1,3 +1,4 @@
+import { realpath, stat } from 'node:fs/promises';
 import { accessSync, constants, realpathSync, statSync, statfsSync, mkdirSync, existsSync } from 'node:fs';
 // Library and download paths are Linux paths reported by Jellyfin/qBittorrent on the server;
 // handle them as POSIX paths regardless of the platform running the code (or its tests).
@@ -189,6 +190,32 @@ export function createDownloadManager({
         error: err.status === 503 ? 'qBittorrent is not configured' : 'qBittorrent is currently unavailable' };
     }
   }
+  async function isInLibrary(torrent, kind) {
+    const field = kind === 'movie' ? 'movieFolder' : kind === 'series' ? 'seriesFolder' : null;
+    if (!field || Number(torrent.progress) !== 1 || !torrentHash.test(String(torrent.hash)) ||
+        typeof torrent.save_path !== 'string' || !path.isAbsolute(torrent.save_path) ||
+        /moving|checking|missingFiles|error/i.test(torrent.state || '')) return false;
+    const folder = path.resolve(torrent.save_path);
+    const roots = storageProvider(env).map(drive => drive[field]).filter(Boolean);
+    if (!roots.some(root => allowedChild(root, folder))) return false;
+    const res = await api('/api/v2/torrents/files?' + new URLSearchParams({ hash: torrent.hash }));
+    const files = await res.json();
+    if (!Array.isArray(files)) return false;
+    const videoFiles = files.filter(file => file?.priority !== 0 && /\.(?:mkv|mp4|m4v|avi|webm|ts)$/i.test(file?.name || ''));
+    if (!videoFiles.length) return false;
+    for (const file of videoFiles) {
+      if (path.isAbsolute(file.name) || file.progress !== 1 || !Number.isSafeInteger(file.size) || file.size <= 0) return false;
+      const filename = path.resolve(folder, file.name);
+      if (!allowedChild(folder, filename)) return false;
+      try {
+        const actual = await realpath(filename);
+        if (actual !== filename) return false;
+        const info = await stat(actual);
+        if (!info.isFile() || info.size !== file.size) return false;
+      } catch { return false; }
+    }
+    return true;
+  }
   async function deleteTorrent(hash) {
     if (typeof hash !== 'string' || !torrentHash.test(hash)) throw invalid('Invalid torrent hash', 400);
     const res = await api('/api/v2/torrents/info?' + new URLSearchParams({ hashes: hash }));
@@ -250,5 +277,5 @@ export function createDownloadManager({
       classifiedAsShow: classification.detectedSeries,
       drive: selected.drive, folder: savePath, availableBytes: selected.availableBytes };
   }
-  return { status, downloads, queueTorrentFile, deleteTorrent, listRaw };
+  return { status, downloads, queueTorrentFile, deleteTorrent, isInLibrary, listRaw };
 }

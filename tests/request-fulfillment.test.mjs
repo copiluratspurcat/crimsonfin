@@ -116,3 +116,37 @@ test('A search interrupted by a restart does not block choosing a release',async
  assert.equal(outcome.state,'queued');
  assert.equal(getCalls(),1);
 });
+
+test('completed requests clear only after confirming placement and explicit removals clear linked requests', async () => {
+ const {db}=fixture();
+ try {
+   const hash='c'.repeat(40);
+   let complete=false, placed=false;
+   const service=createRequestFulfillment({db,downloadManager:{
+     listRaw:async()=>[{hash,progress:complete ? 1 : 0.8}],
+     isInLibrary:async(_,kind)=>{assert.equal(kind,'series');return placed;}
+   }});
+   service.save('requested-item',{state:'downloading',torrent_hash:hash});
+   await service.syncProgress();
+   assert.equal(service.get('requested-item').state,'downloading');
+   complete=true;
+   await service.syncProgress();
+   assert.equal(service.get('requested-item').state,'completed');
+   assert.equal(service.listRows({isAdmin:true}).length,1);
+   placed=true;
+   await service.syncProgress();
+   assert.equal(service.get('requested-item'),undefined);
+   assert.equal(service.listRows({isAdmin:true}).length,0);
+
+   for (const id of ['linked','unrelated']) {
+     db.prepare('INSERT INTO requests (id,title,kind,status) VALUES (?,?,?,?)').run(id,id,'movie','approved');
+     service.save(id,{state:'queued',torrent_hash:id==='linked'?hash:'d'.repeat(40)});
+   }
+   service.markDownloadDeleted(hash);
+   assert.deepEqual(service.listRows({isAdmin:true}).map(r=>r.id),['unrelated']);
+   assert.equal(service.get('linked'),undefined);
+   service.deleteRequest('unrelated');
+   assert.equal(service.get('unrelated'),undefined);
+   assert.equal(service.listRows({isAdmin:true}).length,0);
+ } finally { db.close(); }
+});

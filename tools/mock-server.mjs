@@ -136,6 +136,12 @@ export function createMockServer({ dist = path.join(ROOT, 'dist'), art = path.jo
     if ((m = p.match(/^\/api\/series\/(\w+)\/seasons$/))) return json(res, 200, page([{ Id: id(501), Name: 'Season 1', Type: 'Season' }, { Id: id(502), Name: 'Season 2', Type: 'Season' }]));
     if ((m = p.match(/^\/api\/series\/(\w+)\/episodes$/))) return json(res, 200, page(episodes));
     if (p === '/api/requests') return json(res, 200, { requests });
+    if (p.startsWith('/api/requests/') && req.method === 'DELETE') {
+      const index = requests.findIndex(r => r.id === p.split('/').at(-1));
+      if (index < 0) return json(res, 404, { error: 'Request not found' });
+      requests.splice(index, 1);
+      return json(res, 200, { ok: true });
+    }
     if (p === '/api/admin/status') return json(res, 200, { jellyfinReachable: true, filelistConfigured: true, pendingRequests: 1 });
     if (p === '/api/filelist/search') return json(res, 200, { configured: true, source: 'api', results: [
       { id: '11', name: 'Dune.Part.Two.2024.2160p.BluRay.REMUX-GROUP', size: '52 GB', seeders: 57, downloadable: true },

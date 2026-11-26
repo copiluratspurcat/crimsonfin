@@ -41,6 +41,7 @@ export function createRequestFulfillment({db,filelist,downloadManager}){
   const save=(id,fields)=>{
     const prev=get(id)||{request_id:id,state:'needs_review',release_id:'',release_name:'',torrent_hash:'',drive:'',destination:'',detail:''};
     const v={...prev,...fields,updated_at:stamp()};
+    if (!find(id)) return v;
     db.prepare(`INSERT INTO request_jobs
       (request_id,state,release_id,release_name,torrent_hash,drive,destination,detail,updated_at)
       VALUES(?,?,?,?,?,?,?,?,?)
@@ -90,6 +91,7 @@ export function createRequestFulfillment({db,filelist,downloadManager}){
         release_name:selected.name,torrent_hash:hash,drive:'',destination:exists.save_path,
         detail:'Already present in qBittorrent; no duplicate torrent was added.'});
     }
+    if (find(requestId)?.status !== 'approved') throw err('Request is no longer approved', 409);
     const queued=await downloadManager.queueTorrentFile(bytes,layout.kind,Number(selected.size)||0,selected.name);
     return save(requestId,{state:'queued',release_id:selected.id,release_name:selected.name,
       torrent_hash:hash,drive:queued.drive,destination:queued.folder,detail:''});
@@ -133,12 +135,40 @@ export function createRequestFulfillment({db,filelist,downloadManager}){
     const staleSearch=current?.state==='searching'&&stamp()-current.updated_at>=90_000;
     if(current&&active(current.state)&&!staleSearch)return current;
     const result=await options(requestId,userId);
+    if (find(requestId)?.status !== 'approved') throw err('Request is no longer approved', 409);
     save(requestId,{state:'searching',release_id:String(releaseId)});
     try{return await queue(requestId,userId,releaseId,result)}
     catch(error){return save(requestId,{state:'failed',detail:safeError(error?.message)})}
   }
+  function deleteRequests(ids) {
+    db.exec('BEGIN');
+    try {
+      const deleteJob = db.prepare('DELETE FROM request_jobs WHERE request_id = ?');
+      const deleteRequest = db.prepare('DELETE FROM requests WHERE id = ?');
+      for (const id of ids) {
+        deleteJob.run(id);
+        deleteRequest.run(id);
+      }
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+  function deleteRequest(id) {
+    if (!find(id)) throw err('Request not found', 404);
+    const job = get(id);
+    if (job?.state === 'searching' && stamp() - job.updated_at < 90_000) {
+      throw err('This request is being processed. Try again shortly.', 409);
+    }
+    deleteRequests([id]);
+  }
   async function syncProgress(){
-    const rows=db.prepare("SELECT * FROM request_jobs WHERE state IN ('queued','downloading') AND torrent_hash != ''").all();
+    const previouslyDeleted = db.prepare("SELECT request_id FROM request_jobs WHERE state = 'failed' AND torrent_hash = '' AND detail = ?")
+      .all('An administrator deleted this download and requested removal of its files. Retry or choose another release.');
+    if (previouslyDeleted.length) deleteRequests(previouslyDeleted.map(row => row.request_id));
+    const rows = db.prepare(`SELECT j.*, r.kind, r.status FROM request_jobs j JOIN requests r ON r.id = j.request_id
+      WHERE j.state IN ('queued','downloading','completed') AND j.torrent_hash != ''`).all();
     if(!rows.length)return;
     const jobs=await downloadManager.listRaw();
     const byHash=new Map(jobs.map(j=>[String(j.hash).toLowerCase(),j]));
@@ -147,17 +177,23 @@ export function createRequestFulfillment({db,filelist,downloadManager}){
     for(const row of rows){
       const t=byHash.get(row.torrent_hash.toLowerCase());
       if (get(row.request_id)?.torrent_hash !== row.torrent_hash) continue;
-      if(t){const state=Number(t.progress)>=1?'completed':'downloading';
-        if(row.state!==state)save(row.request_id,{state});
-      } else if(complete&&stamp()-row.updated_at>120_000){
+      if (t) {
+        const state = Number(t.progress) >= 1 ? 'completed' : 'downloading';
+        if (row.state !== state) save(row.request_id, { state });
+        if (state === 'completed' && ['approved','fulfilled'].includes(row.status) &&
+            await downloadManager.isInLibrary(t, row.kind).catch(() => false)) {
+          const request = find(row.request_id);
+          if (request?.kind === row.kind && ['approved','fulfilled'].includes(request.status) &&
+              get(row.request_id)?.torrent_hash === row.torrent_hash) deleteRequests([row.request_id]);
+        }
+      } else if (row.state !== 'completed' && complete && stamp()-row.updated_at > 120_000) {
         save(row.request_id,{state:'failed',detail:'The download was removed from qBittorrent. Retry or choose another release.'});
       }
     }
   }
   function markDownloadDeleted(hash) {
-    db.prepare(`UPDATE request_jobs SET state = 'failed', torrent_hash = '', detail = ?, updated_at = ?
-      WHERE lower(torrent_hash) = ? AND state IN ('queued','downloading','completed')`)
-      .run('An administrator deleted this download and requested removal of its files. Retry or choose another release.', stamp(), hash);
+    const rows = db.prepare('SELECT request_id FROM request_jobs WHERE lower(torrent_hash) = ?').all(hash);
+    if (rows.length) deleteRequests(rows.map(row => row.request_id));
   }
   function listRows(user){
     const rows=user.isAdmin?
@@ -165,5 +201,5 @@ export function createRequestFulfillment({db,filelist,downloadManager}){
       db.prepare("SELECT r.*, j.state AS download_state,j.release_name,j.drive,j.destination,j.detail AS download_detail FROM requests r LEFT JOIN request_jobs j ON j.request_id=r.id WHERE r.user_id=? ORDER BY r.created_at DESC LIMIT 200").all(user.userId);
     return rows.map(row=>({...row,user_id:undefined}));
   }
-  return { process, options, select, syncProgress, markDownloadDeleted, listRows, get, save };
+  return { process, options, select, syncProgress, deleteRequest, markDownloadDeleted, listRows, get, save };
 }

@@ -1,8 +1,8 @@
 import { FileListRelease } from './filelist-release';
 import { bestSeedCount } from './filelist-presentation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import { RefreshCw, Search, ShieldCheck, Trash2 } from 'lucide-react';
 import { api, type Release, type RequestEntry } from './lib';
 import { Empty, StatusDot } from './ui';
 import { downloadStatusLabel } from './requests';
@@ -34,7 +34,24 @@ export function AdminSection() {
       method: 'POST', body: JSON.stringify({ releaseId: arg.releaseId }), signal: AbortSignal.timeout(50000) }),
     onSuccess: () => { setSelectionId(null); refresh(); }
   });
-  const busy = mutate.isPending || retry.isPending || queue.isPending;
+  const dialog = useRef<HTMLDialogElement>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
+  const [target, setTarget] = useState<RequestEntry | null>(null);
+  const remove = useMutation({
+    mutationFn: (id: string) => api(`/api/requests/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    onSuccess: (_, id) => {
+      if (selectionId === id) setSelectionId(null);
+      dialog.current?.close();
+      refresh();
+    }
+  });
+  function askToDelete(request: RequestEntry) {
+    remove.reset();
+    setTarget(request);
+    dialog.current?.showModal();
+    cancel.current?.focus();
+  }
+  const busy = mutate.isPending || retry.isPending || queue.isPending || remove.isPending;
   const check = (loading: boolean, error: boolean, ok?: boolean, yes = 'Connected', no = 'Not connected') =>
     loading ? 'Checking…' : error ? 'Unavailable' : ok ? yes : no;
   const list = requests.data?.requests || [];
@@ -56,6 +73,8 @@ export function AdminSection() {
         <label className="select"><select disabled={busy} aria-label={`Status for ${r.title}`} value={r.status} onChange={e => mutate.mutate({ id: r.id, status: e.target.value })}>
           <option value="pending">Pending</option><option value="approved">Approved</option>
           <option value="rejected">Declined</option><option value="fulfilled">Fulfilled</option></select></label>
+        <button type="button" className="btn small delete-torrent" disabled={busy} aria-label={`Delete request for ${r.title}`}
+          onClick={() => askToDelete(r)}><Trash2 aria-hidden /> Delete request</button>
       </div>
       {r.status === 'approved' && <div className="review-progress">
         <span className="status"><StatusDot tone={r.download_state === 'failed' || r.download_state === 'needs_review' ? 'amber' : 'blue'} />{downloadStatusLabel(r.download_state)}</span>
@@ -83,6 +102,18 @@ export function AdminSection() {
     </li>)}</ul> : <Empty>No requests to review.</Empty>}
     {mutate.isPending && <p className="muted" role="status">Processing approval and checking FileList…</p>}
     {[mutate.error, retry.error, queue.error].filter(Boolean).map((e, i) => <p key={i} className="error" role="alert">{e!.message}</p>)}
+    <dialog ref={dialog} className="dialog" aria-labelledby="delete-request-title" aria-describedby="delete-request-warning"
+      onCancel={event => { if (remove.isPending) event.preventDefault(); }}
+      onClose={() => setTarget(null)}>
+      <h2 id="delete-request-title">Delete request?</h2>
+      <p id="delete-request-warning">Remove “{target?.title}” from Requests. Its torrent and downloaded files will stay on the server.</p>
+      {remove.error && <p className="error" role="alert">{remove.error.message}</p>}
+      <div className="actions">
+        <button type="button" className="btn" ref={cancel} disabled={remove.isPending} onClick={() => dialog.current?.close()}>Cancel</button>
+        <button type="button" className="btn destructive" disabled={!target || remove.isPending}
+          onClick={() => target && remove.mutate(target.id)}>{remove.isPending ? 'Deleting…' : 'Delete request'}</button>
+      </div>
+    </dialog>
     <FileListConfiguration />
   </div>;
 }

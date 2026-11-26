@@ -41,6 +41,7 @@ export function DownloadsSection() {
       setNotice(`Deletion requested for “${torrent.name}”.`);
       void query.refetch();
       void qc.invalidateQueries({ queryKey: ['requests'] });
+      void qc.invalidateQueries({ queryKey: ['adminStatus'] });
     },
     onError: () => { void query.refetch(); }
   });
@@ -94,7 +95,7 @@ export function DownloadsSection() {
       onCancel={event => { if (remove.isPending) event.preventDefault(); }}
       onClose={() => setTarget(null)}>
       <h2 id="delete-torrent-title">Delete torrent and files?</h2>
-      <p id="delete-torrent-warning"><strong>{target?.name}</strong> will be removed from qBittorrent and its downloaded files will be deleted from the server.</p>
+      <p id="delete-torrent-warning"><strong>{target?.name}</strong> will be removed from qBittorrent and its downloaded files will be deleted from the server. Any linked request will also be removed.</p>
       {remove.error && <p className="error" role="alert">{remove.error.message}</p>}
       <div className="actions">
         <button type="button" className="btn" ref={cancelButton} disabled={remove.isPending} onClick={() => dialog.current?.close()}>Cancel</button>
