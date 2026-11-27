@@ -488,7 +488,10 @@ html:has(.player) { overflow: hidden; }
 .time { padding-left: 12px; font-size: var(--fs-s); font-weight: 500; font-variant-numeric: tabular-nums; }
 .volume { display: inline-flex; align-items: center; gap: 6px; padding-left: 4px; }
 .volume input { width: 90px; }
-.seek { position: relative; padding: 6px 0; }
+.seek { position: relative; display: grid; align-items: center; padding: 6px 0; }
+.seek-marks { position: absolute; inset: 0 7px; display: flex; align-items: center; pointer-events: none; }
+.seek-marks span { position: absolute; transform: translateY(-6px); height: 3px; min-width: 1px; border-inline: 1px solid #fff; background: #65c9f2; }
+.seek-marks .outro { background: #ffd080; }
 .seek-preview { position: absolute; bottom: 100%; transform: translateX(-50%); padding: 4px 8px; border-radius: 6px; background: rgb(0 0 0 / .85); font-size: var(--fs-xs); font-weight: 600; font-variant-numeric: tabular-nums; pointer-events: none; }
 /* Range inputs: track fill driven by --played. */
 .player input[type='range'] { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; cursor: pointer; margin: 0; }

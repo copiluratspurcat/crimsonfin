@@ -503,27 +503,52 @@ export function createAppServer(options = {}) {
           await jellyfin(`/Users/${user.userId}/FavoriteItems/${safeId(favorite[1])}`, user, { method: req.method });
           return json(res, 200, { ok: true });
         }
-        // Intro / credits markers for "Skip intro" and the next-episode prompt. Jellyfin 10.10+
-        // exposes MediaSegments; older servers may have the Intro Skipper plugin. Neither is required.
         const segments = pathname.match(/^\/api\/items\/([\w-]+)\/segments$/);
         if (segments && req.method === 'GET') {
           const id = safeId(segments[1]);
-          const span = (start, end) => Number.isFinite(start) && Number.isFinite(end) && end > start ? { start, end } : null;
+          const sourceId = safeId(url.searchParams.get('sourceId') ?? id);
+          const span = (start, end, openEnded = false) => {
+            if (!Number.isFinite(start) || start < 0) return null;
+            if (openEnded && (end == null || end === 0)) return { start, end: null };
+            return Number.isFinite(end) && end > start ? { start, end } : null;
+          };
+          const ticks = value => value == null ? null : Number(value) / 1e7;
           const optional = async relative => {
             try { return await jellyfin(relative, user); }
-            catch (error) { if (error?.status === 401) throw error; return null; }
+            catch (error) { if (![403, 404].includes(error?.status)) throw error; return null; }
           };
           const found = { intro: null, credits: null };
-          const media = await optional(`/MediaSegments/${id}?includeSegmentTypes=Intro&includeSegmentTypes=Outro`);
-          for (const s of Array.isArray(media?.Items) ? media.Items : []) {
-            const value = span(Number(s?.StartTicks) / 1e7, Number(s?.EndTicks) / 1e7);
-            if (s?.Type === 'Intro' && !found.intro) found.intro = value;
-            if (s?.Type === 'Outro' && !found.credits) found.credits = value;
+          for (const segmentId of new Set([sourceId, id])) {
+            // Jellyfin Web uses the selected media source ID. Some servers store markers on the item.
+            const media = await optional(`/MediaSegments/${segmentId}`);
+            for (const s of Array.isArray(media?.Items) ? media.Items : []) {
+              if (s?.Type === 'Intro' || s?.Type === 5) found.intro ||= span(ticks(s.StartTicks), ticks(s.EndTicks));
+              if (s?.Type === 'Outro' || s?.Type === 4) found.credits ||= span(ticks(s.StartTicks), ticks(s.EndTicks), true);
+            }
+            if (found.intro && found.credits) break;
           }
           if (!found.intro || !found.credits) {
             const plugin = await optional(`/Episode/${id}/IntroSkipperSegments`);
             found.intro ||= span(Number(plugin?.Introduction?.IntroStart), Number(plugin?.Introduction?.IntroEnd));
-            found.credits ||= span(Number(plugin?.Credits?.IntroStart), Number(plugin?.Credits?.IntroEnd));
+            found.credits ||= span(Number(plugin?.Credits?.IntroStart), plugin?.Credits?.IntroEnd == null ? null : Number(plugin.Credits.IntroEnd), true);
+          }
+          if (!found.intro || !found.credits) {
+            const item = await optional(`/Users/${user.userId}/Items/${id}?Fields=Chapters,MediaSources`);
+            const source = item?.MediaSources?.find(source => source.Id === sourceId);
+            const chapters = source?.Chapters ?? item?.Chapters;
+            if (Array.isArray(chapters)) {
+              const ordered = chapters.filter(chapter => Number.isFinite(ticks(chapter?.StartPositionTicks)))
+                .sort((a, b) => a.StartPositionTicks - b.StartPositionTicks);
+              for (const [index, chapter] of ordered.entries()) {
+                const name = String(chapter.Name || '').trim().toLowerCase();
+                const start = ticks(chapter.StartPositionTicks);
+                const next = ticks(ordered[index + 1]?.StartPositionTicks);
+                if (/^(intro|introduction|opening|opening credits)( start)?$/.test(name)) found.intro ||= span(start, next);
+                if (/^(outro|credits|end credits|closing credits)( start)?$/.test(name)) {
+                  found.credits ||= span(start, next, true);
+                }
+              }
+            }
           }
           return json(res, 200, found);
         }

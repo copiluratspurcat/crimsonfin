@@ -4,6 +4,7 @@ import http from 'node:http';
 import { once } from 'node:events';
 import { createAppServer, rewriteM3u8 } from '../server/index.mjs';
 
+const OTHER_SOURCE = 'abcdef12-1234-4321-8123-abcdef123456';
 const VIDEO = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
 const earlier = { Id: 'b'.repeat(32), Type: 'Episode', SeriesId: 'a'.repeat(32), IndexNumber: 12, Name: 'Earlier', RunTimeTicks: 12e9 };
 const later = { ...earlier, Id: 'c'.repeat(32), IndexNumber: 17, Name: 'Later' };
@@ -53,12 +54,24 @@ function upstream(isRevoked = () => false, policy = name => name === 'admin', re
     if (p.pathname.endsWith('/Items')) itemQueries.push(p.searchParams);
     if (p.pathname === `/MediaSegments/${VIDEO}`) { res.end(JSON.stringify({ Items: [
       { Type: 'Intro', StartTicks: 12e7, EndTicks: 92e7 }, { Type: 'Outro', StartTicks: 2500e7, EndTicks: 2600e7 }] })); return; }
+    if (p.pathname === `/MediaSegments/${OTHER_SOURCE}`) {
+      res.end(JSON.stringify({ Items: [{ Type: 'Intro', StartTicks: 15e7, EndTicks: 71e7 },
+        { Type: 'Outro', StartTicks: 2700e7 }] }));
+      return;
+    }
     if (p.pathname.startsWith('/MediaSegments/') || p.pathname.includes('/IntroSkipperSegments')) { res.writeHead(404); res.end(); return; }
     if (p.pathname === '/Genres') { res.end(JSON.stringify({ Items: [{ Name: 'Drama' }, { Name: 'Comedie' }] })); return; }
     if (p.pathname.endsWith('/Items/Resume')) { res.end(JSON.stringify({ Items: resumeItems(), TotalRecordCount: 1 })); return; }
     if (p.pathname.endsWith('/Items') && p.searchParams.has('Ids')) {
       const ids = p.searchParams.get('Ids').split(',');
       res.end(JSON.stringify({ Items: [earlier, later].filter(i => ids.includes(i.Id)) })); return;
+    }
+    if (p.pathname.endsWith('/Items/' + later.Id) && p.searchParams.get('Fields')?.includes('Chapters')) {
+      res.end(JSON.stringify({ Chapters: [
+        { Name: 'Intro Start', StartPositionTicks: 0 }, { Name: 'Intro End', StartPositionTicks: 46e7 },
+        { Name: 'End credits', StartPositionTicks: 2013e7 }
+      ] }));
+      return;
     }
     const episode = [earlier, later].find(item => p.pathname.endsWith('/Items/' + item.Id));
     if (episode) { res.end(JSON.stringify(episode)); return; }
@@ -101,6 +114,12 @@ test('login uses per-user token, encrypted storage, cookies, and authorization b
   assert.deepEqual(await (await request(`/api/items/${VIDEO}/segments`, cookie)).json(),
     { intro: { start: 12, end: 92 }, credits: { start: 2500, end: 2600 } });
   assert.deepEqual(await (await request('/api/items/bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb/segments', cookie)).json(), { intro: null, credits: null });
+  assert.deepEqual(await (await request(`/api/items/${VIDEO}/segments?sourceId=${OTHER_SOURCE}`, cookie)).json(),
+    { intro: { start: 15, end: 71 }, credits: { start: 2700, end: null } });
+  assert.deepEqual(await (await request(`/api/items/${VIDEO}/segments?sourceId=${later.Id}`, cookie)).json(),
+    { intro: { start: 12, end: 92 }, credits: { start: 2500, end: 2600 } });
+  assert.deepEqual(await (await request(`/api/items/${later.Id}/segments`, cookie)).json(),
+    { intro: { start: 0, end: 46 }, credits: { start: 2013, end: null } });
   const record = gateway.db.prepare('SELECT token_enc FROM sessions LIMIT 1').get();
   assert.doesNotMatch(record.token_enc, /jellyfin-private-token-123/);
   assert.equal((await request('/api/admin/status', cookie)).status, 403);
