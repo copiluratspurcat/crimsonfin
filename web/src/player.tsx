@@ -417,6 +417,39 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
     };
   }, [item.Id, source?.Id, quality, audioChoice, retry]);
 
+  useLayoutEffect(() => {
+    const video = videoRef.current;
+    const screen = screenRef.current;
+    if (!video || !screen) return;
+    const fitVideo = () => {
+      const { clientWidth, clientHeight } = screen;
+      const { videoWidth, videoHeight } = video;
+      if (!clientWidth || !clientHeight || !videoWidth || !videoHeight) {
+        video.style.removeProperty('--picture-width');
+        video.style.removeProperty('--picture-height');
+        video.style.removeProperty('--caption-base');
+        return;
+      }
+      // Fit the video element itself so native WebVTT wraps within the picture.
+      const scale = Math.min(clientWidth / videoWidth, clientHeight / videoHeight);
+      const width = videoWidth * scale;
+      const height = videoHeight * scale;
+      video.style.setProperty('--picture-width', width + 'px');
+      video.style.setProperty('--picture-height', height + 'px');
+      video.style.setProperty('--caption-base', Math.min(width * 0.026, height * 0.036) + 'px');
+    };
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(fitVideo) : null;
+    if (observer) observer.observe(screen);
+    else window.addEventListener('resize', fitVideo);
+    for (const event of ['loadedmetadata', 'resize', 'emptied']) video.addEventListener(event, fitVideo);
+    fitVideo();
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', fitVideo);
+      for (const event of ['loadedmetadata', 'resize', 'emptied']) video.removeEventListener(event, fitVideo);
+    };
+  }, []);
+
   // Shift browser-rendered WebVTT cues without transcoding the video or
   // changing the saved subtitle file. Negative = show subtitle earlier.
   useEffect(() => {
@@ -548,8 +581,8 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
   const cueClass = `cue-${prefs.subtitleSize} cue-bg-${prefs.subtitleBackground}`;
   return <div className={`player ${cueClass}${hidden ? ' idle' : ''}`} role="dialog" aria-label={`Playing ${mediaTitle}`} aria-modal="true">
     <div className={fullscreen ? 'player-screen is-fullscreen' : 'player-screen'} ref={screenRef}
-      onClick={e => { if (!isTv && e.target === videoRef.current) togglePlay(); }}
-      onDoubleClick={e => { if (!isTv && e.target === videoRef.current) void toggleFullscreen(); }}>
+      onClick={e => { if (!isTv && (e.target === videoRef.current || e.target === e.currentTarget)) togglePlay(); }}
+      onDoubleClick={e => { if (!isTv && (e.target === videoRef.current || e.target === e.currentTarget)) void toggleFullscreen(); }}>
       <video ref={videoRef} playsInline preload="metadata">
         {subtitleUrl && selectedSubtitle && !subtitleUnavailable && <track key={subtitleUrl}
           ref={subtitleElementRef} kind="subtitles" default src={subtitleUrl}

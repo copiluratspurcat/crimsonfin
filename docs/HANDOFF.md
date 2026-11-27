@@ -1,6 +1,6 @@
 # Handoff: current state of work
 
-_Last updated: 2026-11-24. Update this file at the end of every work session (see `AGENTS.md`)._
+_Last updated: 2026-11-27. Update this file at the end of every work session (see `AGENTS.md`)._
 
 ## Release and deployment
 
@@ -11,6 +11,13 @@ hoesmad as soon as verification passes. Main triggers the release workflow and
 the server updater tracks the latest stable GitHub Release. Verify the published
 tag and update assets, the deployed gateway version, and the public health
 endpoint before reporting success.
+
+## Release 2.5.19
+
+Subtitle font sizes use the displayed video's width and height, excluding
+letterboxing. The player recalculates them on resize and when the video's
+intrinsic dimensions change. Normal, Large and Extra large retain separate
+maximum sizes. Physical TV and Windows fullscreen remain unverified.
 
 ## Release 2.5.16
 
