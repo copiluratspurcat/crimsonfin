@@ -197,6 +197,10 @@ async function run(mode, executablePath) {
     // Player (the mock serves no video; controls, segments and Up next still work)
     await evaluate(() => [...document.querySelectorAll('.episode')][1]?.click()); await wait(2500);
     check('Skip intro appears in the intro', await evaluate(() => !!document.querySelector('.skip-intro')));
+    check('the seek bar shows intro and outro ranges', await evaluate(() =>
+      ['.seek-marks .intro', '.seek-marks .outro'].every(selector => document.querySelector(selector)?.getBoundingClientRect().width > 0)));
+    await clickText('.skip-intro', 'Skip intro');
+    check('Skip intro seeks to the end of the intro marker', await evaluate(() => document.querySelector('video').currentTime === 75));
     await shot('12-player');
     const cc = () => evaluate(() => document.querySelector('.player [aria-pressed][aria-label*="ubtitle"]')?.getAttribute('aria-pressed'));
     check('Auto retries a broken subtitle with a same-language track and loads its cues', await evaluate(() => {
@@ -237,6 +241,9 @@ async function run(mode, executablePath) {
     // TV: the remote should land on "Next episode". PC: focus must not move (Space would start it).
     check(tv ? 'Up next focuses Next episode on TV' : 'Up next leaves keyboard focus alone', focusStayed);
     await shot('13-up-next');
+    await page.click('.up-next .primary');
+    await page.waitForFunction(() => !!document.querySelector('.player-title small')?.textContent.includes('Border at Night'));
+    check('Next episode starts the following episode', await evaluate(() => !!document.querySelector('.player-title small')?.textContent.includes('Border at Night')));
 
     check('no JavaScript errors', pageErrors.length === 0, pageErrors.join(' | '));
   } catch (error) {

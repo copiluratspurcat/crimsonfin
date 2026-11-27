@@ -12,6 +12,16 @@ the server updater tracks the latest stable GitHub Release. Verify the published
 tag and update assets, the deployed gateway version, and the public health
 endpoint before reporting success.
 
+## Release 2.5.20
+
+The player uses Jellyfin MediaSegments for the selected media source, with
+item, legacy Intro Skipper, and explicitly named chapter fallbacks. Intro
+and outro ranges appear on the seek bar. A finite outro preserves any
+post-credits scene, and an open-ended outro can advance to the next episode.
+Autoplay starts its countdown only at playback end. Verified with Chromium
+HLS fixtures and PC and TV browser layouts. Physical TV and the specific
+episode from the user's screenshot were not tested.
+
 ## Release 2.5.19
 
 Subtitle font sizes use the displayed video's width and height, excluding

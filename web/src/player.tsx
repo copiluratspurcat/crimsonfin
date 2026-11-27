@@ -22,8 +22,8 @@ type StreamInfo = {
 type MediaSource = { Id: string; MediaStreams?: StreamInfo[]; DefaultAudioStreamIndex?: number; DefaultSubtitleStreamIndex?: number };
 type PlayerItem = { Id: string; Name: string; OriginalTitle?: string; Type?: string; SeriesId?: string; SeriesName?: string; ParentIndexNumber?: number; IndexNumber?: number;
   ImageTags?: { Primary?: string }; UserData?: { PlaybackPositionTicks?: number } };
-type Segments = { intro: { start: number; end: number } | null; credits: { start: number; end: number } | null };
-type Details = PlayerItem & { MediaSources?: MediaSource[] };
+type Segments = { intro: { start: number; end: number } | null; credits: { start: number; end: number | null } | null };
+type Details = PlayerItem & { MediaSources?: MediaSource[]; RunTimeTicks?: number; IndexNumberEnd?: number };
 const ROMANIAN = new Set(['ron', 'rum', 'ro', 'ro-ro']);
 const TEXT_SUBS = new Set(['subrip', 'srt', 'webvtt', 'vtt', 'ass', 'ssa', 'mov_text', 'ttml']);
 
@@ -161,52 +161,57 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
     }
   }
 
-  // Intro / credits markers (when the server has them) and the next episode of a series.
-  const segments = useQuery({ queryKey: ['segments', item.Id], staleTime: Infinity, retry: 0,
-    queryFn: () => api<Segments>(`/api/items/${encodeURIComponent(item.Id)}/segments`) }).data;
-  const episodes = useQuery({ queryKey: ['player-episodes', item.SeriesId], staleTime: 5 * 60_000,
-    enabled: item.Type === 'Episode' && !!item.SeriesId,
-    queryFn: () => api<PageResult>(`/api/series/${encodeURIComponent(item.SeriesId!)}/episodes`) }).data;
+  const segments = useQuery({ queryKey: ['segments', item.Id, source?.Id], staleTime: 60_000,
+    enabled: !!source?.Id,
+    queryFn: () => api<Segments>(`/api/items/${encodeURIComponent(item.Id)}/segments?sourceId=${encodeURIComponent(source!.Id)}`) }).data;
+  const seriesId = detail?.SeriesId ?? item.SeriesId;
+  const episodes = useQuery({ queryKey: ['player-episodes', seriesId], staleTime: 5 * 60_000,
+    enabled: (detail?.Type ?? item.Type) === 'Episode' && !!seriesId && !!onNext,
+    queryFn: () => api<PageResult>(`/api/series/${encodeURIComponent(seriesId!)}/episodes`) }).data;
   const nextEpisode = useMemo(() => {
-    const list = [...(episodes?.Items ?? [])].sort((a, b) =>
-      (a.ParentIndexNumber ?? Number.MAX_SAFE_INTEGER) - (b.ParentIndexNumber ?? Number.MAX_SAFE_INTEGER) ||
-      (a.IndexNumber ?? Number.MAX_SAFE_INTEGER) - (b.IndexNumber ?? Number.MAX_SAFE_INTEGER));
-    const at = list.findIndex(e => e.Id === item.Id);
-    if (at < 0) return undefined;
-    const current = list[at];
-    if (current.ParentIndexNumber == null || current.IndexNumber == null) return list[at + 1];
-    return list.slice(at + 1).find(episode => episode.ParentIndexNumber != null && episode.IndexNumber != null &&
-      (episode.ParentIndexNumber > current.ParentIndexNumber! ||
-       episode.ParentIndexNumber === current.ParentIndexNumber &&
-       episode.IndexNumber > (current.IndexNumberEnd ?? current.IndexNumber!)));
-  }, [episodes, item.Id]);
+    const list = episodes?.Items ?? [];
+    const index = list.findIndex(episode => episode.Id === item.Id);
+    const current = list[index];
+    const season = detail?.ParentIndexNumber ?? item.ParentIndexNumber ?? current?.ParentIndexNumber;
+    const number = detail?.IndexNumberEnd ?? current?.IndexNumberEnd ?? detail?.IndexNumber ?? item.IndexNumber ?? current?.IndexNumber;
+    if (season == null || number == null) return index >= 0 ? list[index + 1] : undefined;
+    return list.filter(e => e.Id !== item.Id && e.ParentIndexNumber != null && e.IndexNumber != null &&
+      (e.ParentIndexNumber > season || (e.ParentIndexNumber === season && e.IndexNumber > number)))
+      .sort((a, b) => a.ParentIndexNumber! - b.ParentIndexNumber! || a.IndexNumber! - b.IndexNumber!)[0];
+  }, [episodes, item, detail]);
   const [ended, setEnded] = useState(false);
   const [dismissedNext, setDismissedNext] = useState(false);
   const [countdown, setCountdown] = useState(10);
+  const total = duration || (detail?.RunTimeTicks ?? 0) / 1e7;
   const credits = segments?.credits;
-  const inCredits = !!credits && clock >= credits.start && clock < credits.end && (!duration || clock < duration - 1);
+  const intro = segments?.intro;
+  const inCredits = !ended && !!credits && clock >= credits.start && (credits.end == null || clock < credits.end);
+  const inIntro = !ended && !!intro && clock >= intro.start && clock < intro.end;
   const showNext = !!nextEpisode && !!onNext && !dismissedNext && (ended || inCredits);
-  const autoNext = showNext && prefs.autoplayNext;
+  // A credits marker can end before a post-credits scene. Only count down at natural playback end.
+  const autoNext = showNext && ended && prefs.autoplayNext;
   useEffect(() => {
     if (!autoNext) return;
-    setCountdown(10);
     const timer = setInterval(() => setCountdown(c => c - 1), 1000);
-    return () => clearInterval(timer);
+    return () => { clearInterval(timer); setCountdown(10); };
   }, [autoNext]);
   useEffect(() => { if (autoNext && countdown <= 0 && nextEpisode) onNext?.(nextEpisode); }, [autoNext, countdown, nextEpisode, onNext]);
-  const intro = segments?.intro;
-  const inIntro = !!intro && clock >= intro.start && clock < intro.end - 1;
-  function skipIntro() {
-    const v = videoRef.current;
-    if (v && intro) { v.currentTime = intro.end; setClock(intro.end); }
-  }
 
-  function skipOutro() {
+  function seekTo(seconds: number) {
     const video = videoRef.current;
-    if (!video || !credits) return;
-    const end = duration > 0 ? Math.min(credits.end, duration) : credits.end;
-    video.currentTime = end;
-    setClock(end);
+    if (!video || !Number.isFinite(seconds)) return;
+    const target = Math.max(0, total > 0 ? Math.min(seconds, total) : seconds);
+    try {
+      video.currentTime = target;
+      resumeRef.current = target;
+      setClock(target);
+    } catch {}
+  }
+  function skipOutro() {
+    if (!credits) return;
+    if (credits.end != null) { seekTo(credits.end); return; }
+    if (total > 0) seekTo(total);
+    if (nextEpisode && onNext) onNext(nextEpisode);
   }
 
   const audioTrack = audioTracks.find(t => t.Index === audioIndex);
@@ -345,7 +350,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
     const startupTimeout = setTimeout(() => showPlaybackError('The stream is taking too long to load. Retry or try a lower quality.'), 45_000);
     const onError = () => showPlaybackError('Unable to play this stream. Try a lower quality.');
     const onTime = () => {
-      if (Number.isFinite(video.currentTime)) setClock(Math.floor(video.currentTime));
+      if (Number.isFinite(video.currentTime)) setClock(video.currentTime);
       if (Number.isFinite(video.duration)) setDuration(video.duration);
     };
     const restorePosition = () => {
@@ -370,6 +375,8 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
     video.addEventListener('pause', onPaused);
     video.addEventListener('error', onError);
     video.addEventListener('timeupdate', onTime);
+    video.addEventListener('durationchange', onTime);
+    video.addEventListener('seeked', onTime);
     video.addEventListener('loadedmetadata', restorePosition);
     video.addEventListener('canplay', startPlayback, { once: true });
     video.addEventListener('ended', onEnded);
@@ -407,7 +414,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
       clearTimeout(startupTimeout);
       for (const [event, handler] of [
         ['playing', onPlaying], ['pause', onPaused], ['error', onError],
-        ['timeupdate', onTime], ['loadedmetadata', restorePosition],
+        ['timeupdate', onTime], ['durationchange', onTime], ['seeked', onTime], ['loadedmetadata', restorePosition],
         ['canplay', startPlayback], ['ended', onEnded]
       ] as const) video.removeEventListener(event, handler);
       hls?.destroy();
@@ -576,7 +583,12 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
   const fullscreenLabel = fullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)';
   const subtitleActive = !!selectedSubtitle && !subtitleUnavailable;
   const subtitleLabel = subtitleUnavailable ? 'Subtitles failed to load' : selectedSubtitle ? `Subtitles: ${languageLabel(selectedSubtitle.Language)} (C)` : 'Subtitles off (C)';
-  const max = Math.max(1, duration);
+  const max = Math.max(1, total);
+  const marks = total > 0 ? ([{ name: 'Intro', segment: intro }, { name: 'Outro', segment: credits }] as const)
+    .flatMap(({ name, segment }) => {
+      if (!segment || segment.start >= total) return [];
+      return [{ name, start: segment.start, end: Math.min(segment.end ?? total, total) }];
+    }) : [];
   const hidden = idle && playing && !showOptions && !status;
   const cueClass = `cue-${prefs.subtitleSize} cue-bg-${prefs.subtitleBackground}`;
   return <div className={`player ${cueClass}${hidden ? ' idle' : ''}`} role="dialog" aria-label={`Playing ${mediaTitle}`} aria-modal="true">
@@ -607,11 +619,17 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
           const x = Math.max(0, Math.min(r.width, e.clientX - r.left));
           setHover({ x, time: (x / r.width) * max });
         }} onMouseLeave={() => setHover(null)}>
-          {hover && duration > 0 && <span className="seek-preview" style={{ left: hover.x }}>{formatTime(hover.time)}</span>}
+          {marks.length > 0 && <div className="seek-marks" aria-hidden="true">
+            {marks.map(mark => <span key={mark.name} className={mark.name.toLowerCase()}
+              style={{ left: (mark.start / max) * 100 + '%', width: ((mark.end - mark.start) / max) * 100 + '%' }} />)}
+          </div>}
+          {hover && total > 0 && <span className="seek-preview" style={{ left: hover.x }}>
+            {formatTime(hover.time)}{marks.filter(mark => hover.time >= mark.start && hover.time < mark.end).map(mark => ' · ' + mark.name)}
+          </span>}
           <input type="range" min={0} max={max} step={0.25} value={Math.min(clock, max)} aria-label="Playback position"
-            aria-valuetext={`${formatTime(clock)} of ${formatTime(duration)}`}
+            aria-valuetext={`${formatTime(clock)} of ${formatTime(total)}${marks.filter(mark => clock >= mark.start && clock < mark.end).map(mark => `, ${mark.name}`).join('')}`}
             style={{ '--played': `${(Math.min(clock, max) / max) * 100}%` } as React.CSSProperties}
-            onChange={e => { const v = videoRef.current; if (v) v.currentTime = Number(e.target.value); setClock(Number(e.target.value)); }}/>
+            onChange={e => seekTo(Number(e.target.value))}/>
         </div>
         <div className="player-controls">
           <div className="group">
@@ -626,7 +644,7 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
                 style={{ '--played': `${(muted ? 0 : volume) * 100}%` } as React.CSSProperties}
                 onChange={e => { setMuted(false); setVolume(Number(e.target.value)); }}/>
             </span>}
-            <span className="time">{formatTime(clock)} / {formatTime(duration)}</span>
+            <span className="time">{formatTime(clock)} / {formatTime(total)}</span>
           </div>
           <div className="group">
             {nextEpisode && onNext && <button className="player-icon" title="Next episode (N)" aria-label="Next episode" onClick={() => onNext(nextEpisode)}>
@@ -641,9 +659,9 @@ export function Player({ item, onClose, onNext }: { item: PlayerItem; onClose: (
         </div>
       </div>
 
-      {inIntro && !showNext && <button className="skip-intro" autoFocus={isTv} onClick={skipIntro}>Skip intro</button>}
+      {inIntro && !showNext && <button className="skip-intro" autoFocus={isTv} onClick={() => intro && seekTo(intro.end)}>Skip intro</button>}
 
-      {inCredits && <button className={showNext ? 'skip-intro above-up-next' : 'skip-intro'} onClick={skipOutro}>Skip outro</button>}
+      {inCredits && (credits?.end != null || total > 0 || nextEpisode) && <button className={showNext ? 'skip-intro above-up-next' : 'skip-intro'} onClick={skipOutro}>Skip outro</button>}
 
       {showNext && nextEpisode && <section className="up-next" aria-label="Up next" aria-live="polite">
         <span className="up-next-art"><img src={itemArt(nextEpisode, 'Primary', 400)} alt="" onError={e => { e.currentTarget.style.visibility = 'hidden'; }}/></span>
