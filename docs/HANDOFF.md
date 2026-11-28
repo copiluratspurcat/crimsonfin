@@ -1,6 +1,6 @@
 # Handoff: current state of work
 
-_Last updated: 2026-11-27. Update this file at the end of every work session (see `AGENTS.md`)._
+_Last updated: 2026-11-28. Update this file at the end of every work session (see `AGENTS.md`)._
 
 ## Release and deployment
 
@@ -11,6 +11,13 @@ hoesmad as soon as verification passes. Main triggers the release workflow and
 the server updater tracks the latest stable GitHub Release. Verify the published
 tag and update assets, the deployed gateway version, and the public health
 endpoint before reporting success.
+
+## Release 2.5.21
+
+macOS DMGs support Apple Silicon and Intel. Both builds use the existing
+desktop gateway configuration and have a native menu. macOS checks for
+updates and links to the release. The DMGs use ad-hoc signing and lack Apple
+notarization. The release checks both architectures on macOS runners.
 
 ## Release 2.5.20
 

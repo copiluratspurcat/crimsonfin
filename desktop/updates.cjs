@@ -1,5 +1,5 @@
 'use strict';
-const { net } = require('electron');
+const { BrowserWindow, net } = require('electron');
 const semver = require('semver');
 const repo = 'copiluratspurcat/crimsonfin';
 const releases = 'https://github.com/' + repo + '/releases';
@@ -12,10 +12,12 @@ function redact(message) {
   return String(message || 'Unknown update failure').replace(/(token|passkey|api_key|password)=([^\s&]+)/ig, '$1=[redacted]').slice(0, 160);
 }
 
-function startAutoUpdates({ app, win, ipcMain, dialog, shell }) {
+function startAutoUpdates({ app, ipcMain, dialog }) {
   if (!app.isPackaged || started) return;
   started = true;
-  const manual = process.platform === 'linux';
+  const mac = process.platform === 'darwin';
+  const manual = process.platform !== 'win32';
+  const currentWindow = () => BrowserWindow.getAllWindows()[0];
   autoUpdater.allowPrerelease = false;
   autoUpdater.allowDowngrade = false;
   autoUpdater.disableDifferentialDownload = true;
@@ -23,7 +25,7 @@ function startAutoUpdates({ app, win, ipcMain, dialog, shell }) {
   autoUpdater.autoInstallOnAppQuit = !manual;
   const publish = patch => {
     last = { ...last, ...patch };
-    for (const window of require('electron').BrowserWindow.getAllWindows()) {
+    for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send('crimsonfin:update', last);
     }
   };
@@ -36,7 +38,7 @@ function startAutoUpdates({ app, win, ipcMain, dialog, shell }) {
     const code = /^[A-Z][A-Z0-9_]{1,50}$/.test(error?.code || '') ? ' (' + error.code + ')' : '';
     publish({ state: 'error', message: (downloading ? 'Update download failed' : 'Could not check for updates') + code + '.' });
     console.warn('[CrimsonFin updater]', redact(error?.message));
-    if (!win.isDestroyed()) win.setProgressBar(-1);
+    currentWindow()?.setProgressBar(-1);
   }
   async function check() {
     if (checking || ['downloading', 'downloaded'].includes(last.state)) return last;
@@ -58,7 +60,9 @@ function startAutoUpdates({ app, win, ipcMain, dialog, shell }) {
       if (!semver.gt(version, app.getVersion())) {
         publish({ state: 'current', version: app.getVersion() });
       } else if (manual) {
-        publish({ state: 'manual', version, message: process.env.APPIMAGE
+        publish({ state: 'manual', version, message: mac
+          ? 'Download the new macOS disk image from the official release.'
+          : process.env.APPIMAGE
           ? 'Download the new AppImage from the official release.'
           : 'Download the new .deb from the official release and install it with your package manager.' });
       } else {
@@ -80,11 +84,13 @@ function startAutoUpdates({ app, win, ipcMain, dialog, shell }) {
   autoUpdater.on('checking-for-update', () => publish({ state: 'checking' }));
   autoUpdater.on('download-progress', info => {
     publish({ state: 'downloading', percent: Math.round(Math.max(0, Math.min(100, info.percent || 0))) });
-    if (!win.isDestroyed()) win.setProgressBar((info.percent || 0) / 100);
+    currentWindow()?.setProgressBar((info.percent || 0) / 100);
   });
   autoUpdater.on('update-downloaded', info => {
-    if (!win.isDestroyed()) win.setProgressBar(-1);
+    currentWindow()?.setProgressBar(-1);
     publish({ state: 'downloaded', version: safeVersion(info.version), percent: 100 });
+    const win = currentWindow();
+    if (!win) return;
     dialog.showMessageBox(win, {
       type: 'info', title: 'CrimsonFin update ready',
       message: 'CrimsonFin ' + (safeVersion(info.version) || 'update') + ' has finished downloading.',
@@ -95,15 +101,15 @@ function startAutoUpdates({ app, win, ipcMain, dialog, shell }) {
     }).catch(reportError);
   });
   autoUpdater.on('error', reportError);
-  ipcMain.handle('crimsonfin:update:get', event => event.sender.id === win.webContents.id ? last : null);
-  ipcMain.handle('crimsonfin:update:check', event => event.sender.id === win.webContents.id ? check() : null);
+  ipcMain.handle('crimsonfin:update:get', event => event.sender.id === currentWindow()?.webContents.id ? last : null);
+  ipcMain.handle('crimsonfin:update:check', event => event.sender.id === currentWindow()?.webContents.id ? check() : null);
   ipcMain.handle('crimsonfin:update:install', event => {
-    if (event.sender.id !== win.webContents.id || last.state !== 'downloaded') return false;
+    if (event.sender.id !== currentWindow()?.webContents.id || last.state !== 'downloaded') return false;
     autoUpdater.quitAndInstall(false, true);
     return true;
   });
-  setTimeout(() => { if (!win.isDestroyed()) check(); }, 12000).unref?.();
-  setInterval(() => { if (!win.isDestroyed()) check(); }, 4 * 3600000).unref?.();
+  setTimeout(() => { if (currentWindow()) void check(); }, 12000).unref?.();
+  setInterval(() => { if (currentWindow()) void check(); }, 4 * 3600000).unref?.();
 }
 
 module.exports = { startAutoUpdates };

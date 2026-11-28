@@ -8,7 +8,7 @@ The former main-branch state is retained in `legacy/v1.2.5-before-rebuild`.
 
 Bump the version in both `package.json` and `package-lock.json` before merging
 to `main`. The release workflow runs the Node and Python tests, checks TypeScript,
-and builds the web app, Windows NSIS installer, Linux packages, and Android TV
+and builds the web app, Windows NSIS installer, Linux packages, Apple Silicon and Intel macOS DMGs, and Android TV
 preview. It verifies the manifest versions and installer checksums, then publishes
 a stable release from a draft tied to the build commit. Each stable tag is used once.
 
@@ -38,7 +38,8 @@ User submissions and administrative approvals are stored in SQLite.
 
 - `.exe` and `.deb` packages are not code-signed, so Windows SmartScreen and
   some Linux package warnings are possible.
-- Windows installs updates on restart. Linux users install the update from the official release.
+- Windows installs updates on restart. macOS and Linux users install updates from the official release.
+- macOS DMGs are ad-hoc signed. Apple Developer ID signing and notarization are not configured.
 - Test real Jellyfin accounts, playback, permissions, and remote bandwidth
   before distributing clients broadly.
 - If a GitHub token or tracker passkey was pasted into a chat, rotate it in
