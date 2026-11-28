@@ -86,7 +86,6 @@ async function makeWindow() {
   win.webContents.on('will-navigate', (event, target) => {
     if (origin && !target.startsWith(origin + '/')) event.preventDefault();
   });
-  Menu.setApplicationMenu(null);
   const webSession = session.fromPartition('persist:crimsonfin');
   webSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   if (!origin) {
@@ -105,8 +104,24 @@ async function makeWindow() {
   }
   return win;
 }
+let openingWindow;
+function showMainWindow() {
+  const existing = BrowserWindow.getAllWindows()[0];
+  if (existing) { existing.show(); return; }
+  if (!openingWindow) {
+    openingWindow = makeWindow()
+      .then(() => startAutoUpdates({ app, ipcMain, dialog }))
+      .catch(err => console.error('[CrimsonFin] Window startup failed', err?.name))
+      .finally(() => { openingWindow = null; });
+  }
+}
 app.whenReady().then(() => {
-  makeWindow().then(win => startAutoUpdates({app, win, ipcMain, dialog, shell})).catch(err => console.error('[CrimsonFin] Window startup failed', err?.name));
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) makeWindow(); });
+  if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      { role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }
+    ]));
+  } else Menu.setApplicationMenu(null);
+  showMainWindow();
+  app.on('activate', showMainWindow);
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

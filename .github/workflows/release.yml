@@ -70,6 +70,66 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  mac:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Configure desktop HTTPS endpoint
+        run: node scripts/configure-client.mjs "$(node -p "require('./desktop/release-target.json').url")"
+      - name: Package CrimsonFin for macOS
+        run: npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
+      - name: Verify the disk image and launch the packaged app
+        env:
+          MAC_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          image="releases/CrimsonFin-$version-mac-$MAC_ARCH.dmg"
+          hdiutil verify "$image"
+          mountpoint=$(mktemp -d)
+          profile=$(mktemp -d)
+          trap 'if [[ -n ${pid:-} ]]; then kill "$pid" 2>/dev/null || true; fi; hdiutil detach "$mountpoint" >/dev/null 2>&1 || true' EXIT
+          hdiutil attach -readonly -nobrowse -mountpoint "$mountpoint" "$image"
+          app="$mountpoint/CrimsonFin.app"
+          binary="$app/Contents/MacOS/CrimsonFin"
+          expected_arch="$MAC_ARCH"
+          if [[ "$MAC_ARCH" == x64 ]]; then expected_arch=x86_64; fi
+          test "$(lipo -archs "$binary")" = "$expected_arch"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$version"
+          codesign --verify --deep --strict "$app"
+          "$binary" --user-data-dir="$profile" --remote-debugging-port=9222 > "$RUNNER_TEMP/crimsonfin-launch.log" 2>&1 &
+          pid=$!
+          for attempt in {1..25}; do
+            kill -0 "$pid" || { cat "$RUNNER_TEMP/crimsonfin-launch.log"; exit 1; }
+            if curl -fsS --max-time 2 http://127.0.0.1:9222/json/list -o "$profile/pages.json" &&
+               node -e 'const pages = require(process.argv[1]); process.exit(pages.some(p => p.type === "page" && p.url.startsWith("https://")) ? 0 : 1)' "$profile/pages.json"; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/crimsonfin-launch.log"
+          exit 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crimsonfin-mac-${{ matrix.arch }}
+          path: releases/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
   android-tv:
     needs: validate
     uses: ./.github/workflows/android-tv.yml
@@ -78,7 +138,7 @@ jobs:
       TV_KEYSTORE_PASSWORD: ${{ secrets.TV_KEYSTORE_PASSWORD }}
 
   release:
-    needs: [build, android-tv]
+    needs: [build, mac, android-tv]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -99,6 +159,8 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           compgen -G 'release-assets/*.deb' > /dev/null
           compgen -G 'release-assets/*.blockmap' > /dev/null
+          test -s "release-assets/CrimsonFin-$version-mac-arm64.dmg"
+          test -s "release-assets/CrimsonFin-$version-mac-x64.dmg"
           python3 scripts/verify-update-manifests.py release-assets "$version"
           find release-assets -maxdepth 1 -type f -name '*.exe' -size +40M | grep -q .
       - name: Publish verified release

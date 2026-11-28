@@ -11,7 +11,7 @@ type Bridge = {
 declare global { interface Window { crimsonfinUpdates?: Bridge } }
 
 const names: Record<string, string> = {
-  idle: 'Automatic updates enabled', checking: 'Checking for updates…',
+  idle: 'Automatic update checks enabled', checking: 'Checking for updates…',
   current: 'You have the latest version', downloading: 'Downloading update…',
   downloaded: 'Update ready to install', manual: 'Update available',
   error: 'Automatic update failed'
@@ -33,7 +33,7 @@ export function UpdatePanel() {
       <small>The web version runs straight from your server, so it is always current. Desktop apps check for updates automatically.</small></span>
     <span className="chip small">Web client</span>
   </div>;
-  const message = state?.state ? names[state.state] || 'Automatic updates enabled' : 'Automatic updates enabled';
+  const message = state?.state ? names[state.state] || 'Automatic update checks enabled' : 'Automatic update checks enabled';
   return <div className="setting column">
     <div className="setting-row">
       <span className="setting-text"><strong>App updates</strong><small>{message}{state?.version ? ' · v' + state.version : ''}</small></span>
@@ -50,6 +50,6 @@ export function UpdatePanel() {
       aria-valuenow={Math.round(state.percent || 0)} aria-valuemin={0} aria-valuemax={100}><i style={{ width: Math.max(0, Math.min(100, state.percent || 0)) + '%' }} /></span>}
     {state?.state === 'error' && <small className="error-text">{state.message || 'Try again later.'}</small>}
     {state?.state === 'manual' && <small className="muted">{state.message}</small>}
-    <small className="muted">CrimsonFin checks GitHub Releases automatically. Windows installs updates on restart. Linux updates are installed from the official release.</small>
+    <small className="muted">CrimsonFin checks GitHub Releases automatically. Windows installs updates on restart. macOS and Linux updates are installed from the official release.</small>
   </div>;
 }
